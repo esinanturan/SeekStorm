@@ -3,6 +3,8 @@ use tokio::sync::RwLockReadGuard;
 use ahash::AHashMap;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "vb")]
+use crate::vector::ResultSource;
 use crate::{
     geo_search::morton_ordering,
     index::{FieldType, Shard},
@@ -16,6 +18,25 @@ use crate::{
 pub struct Result {
     pub doc_id: usize,
     pub score: f32,
+
+    #[cfg(feature = "vb")]
+    pub field_id: u32,
+    #[cfg(feature = "vb")]
+    pub chunk_id: u32,
+    #[cfg(feature = "vb")]
+    pub level_id: u32,
+    #[cfg(feature = "vb")]
+    pub shard_id: u32,
+    #[cfg(feature = "vb")]
+    pub cluster_id: u32,
+    #[cfg(feature = "vb")]
+    pub cluster_score: f32,
+    #[cfg(feature = "vb")]
+    pub vector_score: f32,
+    #[cfg(feature = "vb")]
+    pub lexical_score: f32,
+    #[cfg(feature = "vb")]
+    pub source: ResultSource,
 }
 
 /// MinHeap implements an min-heap, which is a binary heap used as priority queue.
@@ -536,6 +557,10 @@ impl<'a> MinHeap<'a> {
                 Result {
                     doc_id: 0,
                     score: 0.0,
+
+                    #[cfg(feature = "vb")]
+                    source: ResultSource::Lexical,
+                    ..Default::default()
                 };
                 size
             ],
@@ -1192,6 +1217,10 @@ impl<'a> MinHeap<'a> {
                         Result {
                             doc_id: result.doc_id,
                             score: self.docid_hashset[&result.doc_id],
+
+                            #[cfg(feature = "vb")]
+                            source: ResultSource::Lexical,
+                            ..Default::default()
                         },
                         result,
                     )

@@ -105,13 +105,13 @@ But according to my benchmarks, the additional effort for Viterbi over Greedy wa
 
 ### N-grams and BM25
 
-BM25 scores (`SimilarityType::Bm25f`) are almost identical for both n-gram and single-term indexing. There are only small differences for phrase search resulting from  
+BM25 scores (`LexicalSimilarity::Bm25f`) are almost identical for both n-gram and single-term indexing. There are only small differences for phrase search resulting from  
 normalization (32bit->8bit->32bit lossy logarithmic compression/decompression) that is used for posting_count_ngram1/2/3, but not for single term posting_counts.
 
 This is achieved as we store for every partial term of an n-gram its document frequency (DF), i.e. the number of documents a term occurs in.  
 We also store for every partial term of an n-gram its term frequency (TF), i.e., the number of positions within a document.
 
-For the alternative BM25 proximity score (`SimilarityType::Bm25fProximity`) we use DF and TF of the N-gram, as opposed to the DF and TF of its partial terms.  
+For the alternative BM25 proximity score (`LexicalSimilarity::Bm25fProximity`) we use DF and TF of the N-gram, as opposed to the DF and TF of its partial terms.  
 This way, the proximity of terms within an N-gram is honored for scoring.  
 But then we can't anymore score the posting list length and position count of the individual 2 or 3 ngram terms independently,  
 as we store only the posting list length and position count of the N-gram itself, but not its partial terms. 

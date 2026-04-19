@@ -761,41 +761,43 @@ impl Shard {
             );
 
             value.pointer_last = write_pointer_base;
-        } else if term.ngram_type == NgramType::NgramFF
-            || term.ngram_type == NgramType::NgramRF
-            || term.ngram_type == NgramType::NgramFR
-        {
-            *value = PostingListObject0 {
-                pointer_first: write_pointer_base,
-                pointer_last: write_pointer_base,
-                posting_count: 1,
-                position_count: positions_count_sum,
-                ngram_type: term.ngram_type.clone(),
-                term_ngram1: term.term_ngram_1,
-                term_ngram2: term.term_ngram_0,
-                term_ngram3: term.term_ngram_2,
-                size_compressed_positions_key: value.size_compressed_positions_key
-                    + positions_stack,
-                docid_delta_max: docid_lsb,
-                docid_old: docid_lsb,
-                ..*value
-            };
         } else {
-            *value = PostingListObject0 {
-                pointer_first: write_pointer_base,
-                pointer_last: write_pointer_base,
-                posting_count: 1,
-                position_count: positions_count_sum,
-                ngram_type: term.ngram_type.clone(),
-                term_ngram1: term.term_ngram_2,
-                term_ngram2: term.term_ngram_1,
-                term_ngram3: term.term_ngram_0,
-                size_compressed_positions_key: value.size_compressed_positions_key
-                    + positions_stack,
-                docid_delta_max: docid_lsb,
-                docid_old: docid_lsb,
-                ..*value
-            };
+            if term.ngram_type == NgramType::NgramFF
+                || term.ngram_type == NgramType::NgramRF
+                || term.ngram_type == NgramType::NgramFR
+            {
+                *value = PostingListObject0 {
+                    pointer_first: write_pointer_base,
+                    pointer_last: write_pointer_base,
+                    posting_count: 1,
+                    position_count: positions_count_sum,
+                    ngram_type: term.ngram_type.clone(),
+                    term_ngram1: term.term_ngram_1,
+                    term_ngram2: term.term_ngram_0,
+                    term_ngram3: term.term_ngram_2,
+                    size_compressed_positions_key: value.size_compressed_positions_key
+                        + positions_stack,
+                    docid_delta_max: docid_lsb,
+                    docid_old: docid_lsb,
+                    ..*value
+                };
+            } else {
+                *value = PostingListObject0 {
+                    pointer_first: write_pointer_base,
+                    pointer_last: write_pointer_base,
+                    posting_count: 1,
+                    position_count: positions_count_sum,
+                    ngram_type: term.ngram_type.clone(),
+                    term_ngram1: term.term_ngram_2,
+                    term_ngram2: term.term_ngram_1,
+                    term_ngram3: term.term_ngram_0,
+                    size_compressed_positions_key: value.size_compressed_positions_key
+                        + positions_stack,
+                    docid_delta_max: docid_lsb,
+                    docid_old: docid_lsb,
+                    ..*value
+                };
+            }
         }
 
         write_pointer_base += 4;

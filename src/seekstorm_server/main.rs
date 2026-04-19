@@ -35,7 +35,7 @@
 //! ---
 //! ### create index
 //! ```
-//! curl --request POST --url http://127.0.0.1:80/api/v1/index --header 'apikey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' --header 'content-type: application/json' --data '{"schema":[{"field_type": "Text","stored": true,"field": "title","indexed": true,"boost":10.0},{"field_type": "Text","stored": true,"field": "body","indexed": true},{"field_type": "String","stored": true,"field": "url","indexed": false}],"index_name": "test_index","similarity": "Bm25fProximity","tokenizer": "UnicodeAlphanumeric"}'
+//! curl --request POST --url http://127.0.0.1:80/api/v1/index --header 'apikey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' --header 'content-type: application/json' --data '{"schema":[{"field_type": "Text","store": true,"field": "title","index_lexical": true,"boost":10.0},{"field_type": "Text","store": true,"field": "body","index_lexical": true},{"field_type": "String","store": true,"field": "url","index_lexical": false}],"index_name": "test_index","similarity": "Bm25fProximity","tokenizer": "UnicodeAlphanumeric"}'
 //! ```
 //! ### get index
 //! ```
@@ -114,7 +114,6 @@
 //! To use the embedded Web UI for a selected index you need to change the API_KEY and index_id (in QUERY_URL) in master.js
 //! **before** building the seekstorm_server (html/css/js are embedded ressources).
 
-use colored::Colorize;
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -162,13 +161,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
         }
     }
-
-    println!("{} v{}", "SeekStorm server".bright_green(), VERSION);
-    println!(
-        "{}",
-        "Press CTRL-C or enter 'quit' to shutdown server, enter 'help' for console commands."
-            .yellow()
-    );
 
     initialize(params).await;
 

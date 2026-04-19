@@ -8,6 +8,7 @@ use std::{
 
 use ahash::AHashMap;
 use itertools::Itertools;
+use serde_json::Value;
 use std::collections::HashSet;
 use utoipa::{OpenApi, ToSchema};
 
@@ -15,15 +16,21 @@ use seekstorm::{
     commit::Commit,
     highlighter::{Highlight, highlighter},
     index::{
-        AccessType, Close, DeleteDocument, DeleteDocuments, DeleteDocumentsByQuery, DistanceField,
-        Document, DocumentCompression, Facet, FileType, FrequentwordType, IndexArc, IndexDocument,
-        IndexDocuments, IndexMetaObject, MinMaxFieldJson, NgramSet, QueryCompletion, SchemaField,
-        SimilarityType, SpellingCorrection, StemmerType, StopwordType, Synonym, TokenizerType,
-        UpdateDocument, UpdateDocuments, create_index, open_index,
+        AccessType, Close, Clustering, DeleteDocument, DeleteDocuments, DeleteDocumentsByQuery,
+        DistanceField, Document, DocumentCompression, Facet, FileType, FrequentwordType,
+        IS_SYSTEM_LE, IndexArc, IndexDocument, IndexDocuments, IndexMetaObject, LexicalSimilarity,
+        MinMaxFieldJson, NgramSet, QueryCompletion, SchemaField, SpellingCorrection, StemmerType,
+        StopwordType, Synonym, TokenizerType, UpdateDocument, UpdateDocuments, create_index,
+        open_index,
     },
     ingest::IndexPdfBytes,
     iterator::{GetIterator, IteratorResult},
-    search::{FacetFilter, QueryFacet, QueryRewriting, QueryType, ResultSort, ResultType, Search},
+    search::{
+        FacetFilter, QueryFacet, QueryRewriting, QueryType, ResultSort, ResultType, Search,
+        SearchMode,
+    },
+    utils::decode_bytes_from_base64_string,
+    vector::Inference,
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,11 +43,14 @@ use crate::{
 const APIKEY_PATH: &str = "apikey.json";
 
 /// Search request object
-#[derive(Deserialize, Serialize, Clone, ToSchema)]
+#[derive(Deserialize, Serialize, Clone, ToSchema, Debug)]
 pub struct SearchRequestObject {
     /// Query string, search operators + - "" are recognized.
     #[serde(rename = "query")]
     pub query_string: String,
+    /// Optional query vector: If None, then the query vector is derived from the query string using the specified model. If Some, then the query vector is used for semantic search and the query string is only used for lexical search and highlighting.
+    #[serde(default)]
+    pub query_vector: Option<Value>,
     #[serde(default)]
     #[schema(required = false, default = false, example = false)]
     /// Enable empty query: if true, an empty query string iterates through all indexed documents, supporting the query parameters: offset, length, query_facets, facet_filter, result_sort,
@@ -95,6 +105,14 @@ pub struct SearchRequestObject {
     #[schema(required = false, example = QueryRewriting::SearchOnly)]
     #[serde(default = "query_rewriting_api")]
     pub query_rewriting: QueryRewriting,
+
+    #[schema(required = false, example = SearchMode::Lexical)]
+    #[serde(default = "search_mode_api")]
+    pub search_mode: SearchMode,
+}
+
+fn search_mode_api() -> SearchMode {
+    SearchMode::Lexical
 }
 
 fn query_type_api() -> QueryType {
@@ -143,14 +161,14 @@ pub struct CreateIndexRequest {
     #[schema(example = "demo_index")]
     pub index_name: String,
     #[schema(required = true, example = json!([
-    {"field":"title","field_type":"Text","stored":true,"indexed":true,"boost":10.0},
-    {"field":"body","field_type":"Text","stored":true,"indexed":true,"longest":true},
-    {"field":"url","field_type":"Text","stored":true,"indexed":false},
-    {"field":"date","field_type":"Timestamp","stored":true,"indexed":false,"facet":true}]))]
+    {"field":"title","field_type":"Text","store":true,"index_lexical":true,"boost":10.0},
+    {"field":"body","field_type":"Text","store":true,"index_lexical":true,"longest":true},
+    {"field":"url","field_type":"Text","store":true,"index_lexical":false},
+    {"field":"date","field_type":"Timestamp","store":true,"index_lexical":false,"facet":true}]))]
     #[serde(default)]
     pub schema: Vec<SchemaField>,
     #[serde(default = "similarity_type_api")]
-    pub similarity: SimilarityType,
+    pub similarity: LexicalSimilarity,
     #[serde(default = "tokenizer_type_api")]
     pub tokenizer: TokenizerType,
     #[serde(default)]
@@ -185,10 +203,14 @@ pub struct CreateIndexRequest {
     pub spelling_correction: Option<SpellingCorrection>,
     #[serde(default)]
     pub query_completion: Option<QueryCompletion>,
+    #[serde(default)]
+    pub clustering: Clustering,
+    #[serde(default)]
+    pub inference: Inference,
 }
 
-fn similarity_type_api() -> SimilarityType {
-    SimilarityType::Bm25fProximity
+fn similarity_type_api() -> LexicalSimilarity {
+    LexicalSimilarity::Bm25fProximity
 }
 
 fn tokenizer_type_api() -> TokenizerType {
@@ -265,30 +287,30 @@ pub(crate) struct IndexResponseObject {
     #[schema(example = json!({
         "title":{
             "field":"title",
-            "stored":true,
-            "indexed":true,
+            "store":true,
+            "index_lexical":true,
             "field_type":"Text",
             "boost":10.0,
             "field_id":0
         },
         "body":{
             "field":"body",
-            "stored":true,
-            "indexed":true,
+            "store":true,
+            "index_lexical":true,
             "field_type":"Text",
             "field_id":1
         },
         "url":{
            "field":"url",
-           "stored":true,
-           "indexed":false,
+           "store":true,
+           "index_lexical":false,
            "field_type":"Text",
            "field_id":2
         },
         "date":{
            "field":"date",
-           "stored":true,
-           "indexed":false,
+           "store":true,
+           "index_lexical":false,
            "field_type":"Timestamp",
            "facet":true,
            "field_id":3
@@ -331,23 +353,23 @@ pub(crate) fn save_apikey_data(apikey: &ApikeyObject, index_path: &PathBuf) {
     save_file_atomically(&apikey_persistence_path, apikey_persistence_json);
 }
 
-/// Hello
-///
-/// Returns a hello message with the SeekStorm server version.
+/// Live
+/// 
+/// Returns a live message with the SeekStorm server version.
 #[utoipa::path(
     tag = "Info",
     get,
-    path = "/api/v1/hello",
+    path = "/api/v1/live",
     responses(
-        (status = 200, description = "Hello message", body = String),
+        (status = 200, description = "SeekStorm server is live", body = String),
     )
 )]
-pub(crate) fn hello_api() -> String {
+pub(crate) fn live_api() -> String {
     "SeekStorm server ".to_owned() + VERSION
 }
 
 /// Create API Key
-///
+/// 
 /// Creates an API key and returns the Base64 encoded API key.  
 /// Expects the Base64 encoded master API key in the header.  
 /// Use the master API key displayed in the server console at startup.
@@ -378,7 +400,7 @@ pub(crate) fn create_apikey_api<'a>(
 
     let mut apikey_id: u64 = 0;
     let mut apikey_list_vec: Vec<(&u128, &ApikeyObject)> = apikey_list.iter().collect();
-    apikey_list_vec.sort_by(|a, b| a.1.id.cmp(&b.1.id));
+    apikey_list_vec.sort_by_key(|a| a.1.id);
     for value in apikey_list_vec {
         if value.1.id == apikey_id {
             apikey_id = value.1.id + 1;
@@ -404,7 +426,7 @@ pub(crate) fn create_apikey_api<'a>(
 }
 
 /// Delete API Key
-///
+/// 
 /// Deletes an API and returns the number of remaining API keys.
 /// Expects the Base64 encoded master API key in the header.
 /// WARNING: This will delete all indices and documents associated with the API key.
@@ -508,7 +530,7 @@ pub(crate) async fn open_all_apikeys(
 }
 
 /// Create Index
-///
+/// 
 /// Create an index within the directory associated with the specified API key and return the index_id.
 #[utoipa::path(
     post,
@@ -531,7 +553,7 @@ pub(crate) async fn create_index_api<'a>(
     index_path: &'a PathBuf,
     index_name: String,
     schema: Vec<SchemaField>,
-    similarity: SimilarityType,
+    lexical_similarity: LexicalSimilarity,
     tokenizer: TokenizerType,
     stemmer: StemmerType,
     stop_words: StopwordType,
@@ -544,6 +566,8 @@ pub(crate) async fn create_index_api<'a>(
     spelling_correction: Option<SpellingCorrection>,
     query_completion: Option<QueryCompletion>,
     mute: bool,
+    clustering: Clustering,
+    inference: Inference,
 ) -> u64 {
     let mut index_id: u64 = 0;
     for id in apikey_object.index_list.keys().sorted() {
@@ -562,7 +586,7 @@ pub(crate) async fn create_index_api<'a>(
     let meta = IndexMetaObject {
         id: index_id,
         name: index_name,
-        similarity,
+        lexical_similarity,
         tokenizer,
         stemmer,
         stop_words,
@@ -572,6 +596,8 @@ pub(crate) async fn create_index_api<'a>(
         access_type: AccessType::Mmap,
         spelling_correction,
         query_completion,
+        clustering,
+        inference,
     };
 
     let index_arc = create_index(
@@ -592,7 +618,7 @@ pub(crate) async fn create_index_api<'a>(
 }
 
 /// Delete Index
-///
+/// 
 /// Delete an index within the directory associated with the specified API key and return the number of remaining indices.
 #[utoipa::path(
     delete,
@@ -628,7 +654,7 @@ pub(crate) async fn delete_index_api(
 }
 
 /// Commit Index
-///
+/// 
 /// Commit moves indexed documents from the intermediate uncompressed data structure (array lists/HashMap, queryable by realtime search) in RAM
 /// to the final compressed data structure (roaring bitmap) on Mmap or disk -
 /// which is persistent, more compact, with lower query latency and allows search with realtime=false.
@@ -704,7 +730,7 @@ pub(crate) async fn get_synonyms_api(index_arc: &IndexArc) -> Result<Vec<Synonym
 }
 
 /// Get Index Info
-///
+/// 
 /// Get index Info from index with index_id
 #[utoipa::path(
     get,
@@ -750,7 +776,7 @@ pub(crate) async fn get_index_info_api(
 }
 
 /// Get API Key Info
-///
+/// 
 /// Get info about all indices associated with the specified API key
 #[utoipa::path(
     get,
@@ -793,7 +819,7 @@ pub(crate) async fn get_apikey_indices_info_api(
 }
 
 /// Index Document(s)
-///
+/// 
 /// Index a JSON document or an array of JSON documents (bulk), each consisting of arbitrary key-value pairs to the index with the specified apikey and index_id, and return the number of indexed docs.
 /// Index documents enables true real-time search (as opposed to near realtime.search):
 /// When in query_index the parameter `realtime` is set to `true` then indexed, but uncommitted documents are immediately included in the search results, without requiring a commit or refresh.
@@ -827,7 +853,7 @@ pub(crate) async fn index_document_api(
 }
 
 /// Index PDF file
-///
+/// 
 /// Index PDF file (byte array) to the index with the specified apikey and index_id, and return the number of indexed docs.
 /// - Converts PDF to a JSON document with "title", "body", "url" and "date" fields and indexes it.
 /// - extracts title from metatag, or first line of text, or from filename
@@ -869,7 +895,7 @@ pub(crate) async fn index_file_api(
 }
 
 /// Get PDF file
-///
+/// 
 /// Get PDF file from index with index_id
 /// ⚠️ Use search or get_iterator first to obtain s valid doc_id. Document IDs are not guaranteed to be continuous and gapless!
 #[utoipa::path(
@@ -910,7 +936,7 @@ pub(crate) async fn index_documents_api(
 }
 
 /// Get Document
-///
+/// 
 /// Get document from index with index_id
 /// ⚠️ Use search or get_iterator first to obtain a valid doc_id. Document IDs are not guaranteed to be continuous and gapless!
 #[utoipa::path(
@@ -981,7 +1007,7 @@ pub(crate) async fn get_document_api(
 }
 
 /// Update Document(s)
-///
+/// 
 /// Update a JSON document or an array of JSON documents (bulk), each consisting of arbitrary key-value pairs to the index with the specified apikey and index_id, and return the number of indexed docs.
 /// Update document is a combination of delete_document and index_document.
 /// All current limitations of delete_document apply.
@@ -1023,7 +1049,7 @@ pub(crate) async fn update_documents_api(
 }
 
 /// Delete Document
-///
+/// 
 /// Delete document by document_id from index with index_id
 /// ⚠️ Use search or get_iterator first to obtain a valid doc_id. Document IDs are not guaranteed to be continuous and gapless!
 /// Immediately effective, indpendent of commit.
@@ -1062,7 +1088,7 @@ pub(crate) async fn delete_document_by_parameter_api(
 }
 
 /// Delete Document(s) by Request Object
-///
+/// 
 /// Delete document by document_id, by array of document_id (bulk), by query (SearchRequestObject) from index with index_id, or clear all documents from index.
 /// Immediately effective, indpendent of commit.
 /// Index space used by deleted documents is not reclaimed (until compaction is implemented), but result_count_total is updated.
@@ -1136,7 +1162,7 @@ pub(crate) async fn delete_documents_by_query_api(
 }
 
 /// Document iterator
-///
+/// 
 /// Document iterator via GET and POST are identical, only the way parameters are passed differ.
 /// The document iterator allows to iterate over all document IDs and documents in the entire index, forward or backward.
 /// It enables efficient sequential access to every document, even in very large indexes, without running a search.
@@ -1150,7 +1176,6 @@ pub(crate) async fn delete_documents_by_query_api(
 /// When these are mapped to global document IDs, temporary gaps can appear.
 /// As a result, simply iterating from 0 to the total document count may encounter invalid IDs near the end.
 /// The Document Iterator abstracts this complexity and reliably returns only valid document IDs.
-///
 /// # Parameters
 /// - docid=None, take>0: **skip first s document IDs**, then **take next t document IDs** of an index.
 /// - docid=None, take<0: **skip last s document IDs**, then **take previous t document IDs** of an index.
@@ -1160,10 +1185,8 @@ pub(crate) async fn delete_documents_by_query_api(
 /// - The sign of take indicates the direction of iteration: positive take for forward iteration, negative take for backward iteration.
 /// - The skip parameter is always positive, indicating the number of document IDs to skip before taking document IDs. The skip direction is determined by the sign of take too.
 /// - include_document: if true, the documents are also retrieved along with their document IDs.
-///
 /// Next page:     take last  docid from previous result set, skip=1, take=+page_size
 /// Previous page: take first docid from previous result set, skip=1, take=-page_size
-///
 /// Returns an IteratorResult, consisting of the number of actually skipped document IDs, and a list of taken document IDs and documents, sorted ascending).
 /// Detect end/begin of index during iteration: if returned vec.len() < requested take || if returned skip <requested skip
 #[utoipa::path(
@@ -1217,7 +1240,7 @@ pub(crate) async fn get_iterator_api_get(
 }
 
 /// Document iterator
-///
+/// 
 /// Document iterator via GET and POST are identical, only the way parameters are passed differ.
 /// The document iterator allows to iterate over all document IDs and documents in the entire index, forward or backward.
 /// It enables efficient sequential access to every document, even in very large indexes, without running a search.
@@ -1231,7 +1254,6 @@ pub(crate) async fn get_iterator_api_get(
 /// When these are mapped to global document IDs, temporary gaps can appear.
 /// As a result, simply iterating from 0 to the total document count may encounter invalid IDs near the end.
 /// The Document Iterator abstracts this complexity and reliably returns only valid document IDs.
-///
 /// # Parameters
 /// - docid=None, take>0: **skip first s document IDs**, then **take next t document IDs** of an index.
 /// - docid=None, take<0: **skip last s document IDs**, then **take previous t document IDs** of an index.
@@ -1241,10 +1263,8 @@ pub(crate) async fn get_iterator_api_get(
 /// - The sign of take indicates the direction of iteration: positive take for forward iteration, negative take for backward iteration.
 /// - The skip parameter is always positive, indicating the number of document IDs to skip before taking document IDs. The skip direction is determined by the sign of take too.
 /// - include_document: if true, the documents are also retrieved along with their document IDs.
-///
 /// Next page:     take last  docid from previous result set, skip=1, take=+page_size
 /// Previous page: take first docid from previous result set, skip=1, take=-page_size
-///
 /// Returns an IteratorResult, consisting of the number of actually skipped document IDs, and a list of taken document IDs and documents, sorted ascending).
 /// Detect end/begin of index during iteration: if returned vec.len() < requested take || if returned skip <requested skip
 #[utoipa::path(
@@ -1298,7 +1318,7 @@ pub(crate) async fn clear_index_api(index_arc: &IndexArc) -> Result<u64, String>
 }
 
 /// Query Index
-///
+/// 
 /// Query results from index with index_id
 /// The following parameters are supported:
 /// - Result type
@@ -1338,7 +1358,7 @@ pub(crate) async fn query_index_api_post(
 }
 
 /// Query Index
-///
+/// 
 /// Query results from index with index_id.
 /// Query index via GET is a convenience function, that offers only a limited set of parameters compared to Query Index via POST.
 #[utoipa::path(
@@ -1370,16 +1390,49 @@ pub(crate) async fn query_index_api_get(
     query_index_api(index_arc, search_request).await
 }
 
+use seekstorm::vector::{embedding_from_bytes_be, embedding_from_json};
+
 pub(crate) async fn query_index_api(
     index_arc: &IndexArc,
     search_request: SearchRequestObject,
 ) -> SearchResultObject {
     let start_time = Instant::now();
 
+    let query_vector = if let Some(value) = search_request.query_vector
+        && search_request.search_mode != SearchMode::Lexical
+    {
+        match &value {
+            Value::String(string_base64) => {
+                if let Ok(bytes) = decode_bytes_from_base64_string(string_base64)
+                    && let Some(embedding) = embedding_from_bytes_be(
+                        &bytes,
+                        index_arc.read().await.vector_precision,
+                        index_arc.read().await.vector_dimensions,
+                        *IS_SYSTEM_LE,
+                    )
+                {
+                    Some(embedding)
+                } else {
+                    None
+                }
+            }
+            Value::Array(_) => embedding_from_json(
+                &value,
+                index_arc.read().await.vector_precision,
+                index_arc.read().await.vector_dimensions,
+            ),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     let result_object = index_arc
         .search(
             search_request.query_string.to_owned(),
+            query_vector,
             search_request.query_type_default,
+            search_request.search_mode,
             search_request.enable_empty_query,
             search_request.offset,
             search_request.length,
@@ -1455,7 +1508,7 @@ pub(crate) async fn query_index_api(
 
 #[derive(OpenApi, Default)]
 #[openapi(paths(
-    hello_api,
+    live_api,
     create_apikey_api,
     get_apikey_indices_info_api,
     delete_apikey_api,

@@ -5,9 +5,9 @@ use std::cmp::Ordering;
 use crate::{
     geo_search::{decode_morton_2_d, euclidian_distance},
     index::{
-        AccessType, CompressionType, FIELD_STOP_BIT_1, FIELD_STOP_BIT_2, FieldType, NgramType,
-        NonUniquePostingListObjectQuery, PostingListObjectQuery, SPEEDUP_FLAG, STOP_BIT, Shard,
-        SimilarityType, get_document_length_compressed_mmap,
+        AccessType, CompressionType, FIELD_STOP_BIT_1, FIELD_STOP_BIT_2, FieldType,
+        LexicalSimilarity, NgramType, NonUniquePostingListObjectQuery, PostingListObjectQuery,
+        SPEEDUP_FLAG, STOP_BIT, Shard, get_document_length_compressed_mmap,
     },
     min_heap,
     search::{FilterSparse, Ranges, ResultType, SearchResult},
@@ -150,13 +150,12 @@ pub(crate) fn add_result_singleterm_multifield(
                     return;
                 }
             }
-            CompressionType::Bitmap => {
+            CompressionType::Bitmap
                 if (plo.byte_array[plo.compressed_doc_id_range + (local_docid >> 3)]
                     & (1 << (local_docid & 7)))
-                    > 0
-                {
-                    return;
-                }
+                    > 0 =>
+            {
+                return;
             }
             CompressionType::Rle => {
                 if local_docid >= plo.docid as usize && local_docid <= plo.run_end as usize {
@@ -331,6 +330,8 @@ pub(crate) fn add_result_singleterm_multifield(
         min_heap::Result {
             doc_id: docid,
             score: bm25f,
+
+            ..Default::default()
         },
         top_k,
     );
@@ -683,13 +684,12 @@ pub(crate) fn add_result_singleterm_singlefield(
                     return;
                 }
             }
-            CompressionType::Bitmap => {
+            CompressionType::Bitmap
                 if (plo.byte_array[plo.compressed_doc_id_range + (local_docid >> 3)]
                     & (1 << (local_docid & 7)))
-                    > 0
-                {
-                    return;
-                }
+                    > 0 =>
+            {
+                return;
             }
             CompressionType::Rle => {
                 if local_docid >= plo.docid as usize && local_docid <= plo.run_end as usize {
@@ -857,6 +857,8 @@ pub(crate) fn add_result_singleterm_singlefield(
         min_heap::Result {
             doc_id: docid,
             score: bm25f,
+
+            ..Default::default()
         },
         top_k,
     );
@@ -913,7 +915,7 @@ pub(crate) fn get_bm25f_singleterm_multifield(
             }
         }
     } else if plo_single.ngram_type == NgramType::SingleTerm
-        || shard.meta.similarity == SimilarityType::Bm25fProximity
+        || shard.meta.lexical_similarity == LexicalSimilarity::Bm25fProximity
     {
         for field in field_vec.iter() {
             let field_id = field.0 as usize;
@@ -2655,44 +2657,46 @@ pub(crate) fn decode_positions_singleterm_singlefield(
         }
 
         read_singlefield_value(positions_count, plo.byte_array, &mut positions_pointer);
-    } else if plo.p_docid < plo.pointer_pivot_p_docid as i32 {
-        match rank_position_pointer >> 14 {
-            0b10 => {
-                *positions_count = 1;
-            }
-            0b11 => {
-                *positions_count = 2;
-            }
-
-            _ => {
-                println!(
-                    "unsupported single 2 byte pointer embedded {:032b}",
-                    rank_position_pointer >> 14
-                );
-            }
-        }
     } else {
-        match (rank_position_pointer & 0b11111111_11111111_11111111) >> 21 {
-            0b100 => {
-                *positions_count = 1;
-            }
-            0b101 => {
-                *positions_count = 2;
-            }
-            0b110 => {
-                *positions_count = 3;
-            }
-            0b111 => {
-                *positions_count = 4;
-            }
+        if plo.p_docid < plo.pointer_pivot_p_docid as i32 {
+            match rank_position_pointer >> 14 {
+                0b10 => {
+                    *positions_count = 1;
+                }
+                0b11 => {
+                    *positions_count = 2;
+                }
 
-            _ => {
-                println!(
-                    "unsupported single 3 byte pointer embedded {:032b}",
-                    (rank_position_pointer & 0b11111111_11111111_11111111) >> 21
-                );
+                _ => {
+                    println!(
+                        "unsupported single 2 byte pointer embedded {:032b}",
+                        rank_position_pointer >> 14
+                    );
+                }
             }
-        }
+        } else {
+            match (rank_position_pointer & 0b11111111_11111111_11111111) >> 21 {
+                0b100 => {
+                    *positions_count = 1;
+                }
+                0b101 => {
+                    *positions_count = 2;
+                }
+                0b110 => {
+                    *positions_count = 3;
+                }
+                0b111 => {
+                    *positions_count = 4;
+                }
+
+                _ => {
+                    println!(
+                        "unsupported single 3 byte pointer embedded {:032b}",
+                        (rank_position_pointer & 0b11111111_11111111_11111111) >> 21
+                    );
+                }
+            }
+        };
     }
 }
 
@@ -3018,13 +3022,12 @@ pub(crate) fn add_result_multiterm_multifield(
                     return;
                 }
             }
-            CompressionType::Bitmap => {
+            CompressionType::Bitmap
                 if (plo.byte_array[plo.compressed_doc_id_range + (local_docid >> 3)]
                     & (1 << (local_docid & 7)))
-                    > 0
-                {
-                    return;
-                }
+                    > 0 =>
+            {
+                return;
             }
             CompressionType::Rle => {
                 if local_docid >= plo.docid as usize && local_docid <= plo.run_end as usize {
@@ -3210,6 +3213,7 @@ pub(crate) fn add_result_multiterm_multifield(
                     Ordering::Equal => {
                         if t2 + 1 < non_unique_query_list.len() {
                             t2 += 1;
+
                             pos2 = non_unique_query_list[t2].pos;
                             continue;
                         }
@@ -3338,6 +3342,7 @@ pub(crate) fn add_result_multiterm_multifield(
                         Ordering::Equal => {
                             if t2 + 1 < non_unique_query_list.len() {
                                 t2 += 1;
+
                                 pos2 = non_unique_query_list[t2].pos;
                                 continue;
                             }
@@ -3403,6 +3408,8 @@ pub(crate) fn add_result_multiterm_multifield(
         min_heap::Result {
             doc_id: docid,
             score: bm25,
+
+            ..Default::default()
         },
         top_k,
     );
@@ -3452,13 +3459,12 @@ pub(crate) fn add_result_multiterm_singlefield(
                     return;
                 }
             }
-            CompressionType::Bitmap => {
+            CompressionType::Bitmap
                 if (plo.byte_array[plo.compressed_doc_id_range + (local_docid >> 3)]
                     & (1 << (local_docid & 7)))
-                    > 0
-                {
-                    return;
-                }
+                    > 0 =>
+            {
+                return;
             }
             CompressionType::Rle => {
                 if local_docid >= plo.docid as usize && local_docid <= plo.run_end as usize {
@@ -3642,6 +3648,7 @@ pub(crate) fn add_result_multiterm_singlefield(
                 Ordering::Equal => {
                     if t2 + 1 < non_unique_query_list.len() {
                         t2 += 1;
+
                         pos2 = non_unique_query_list[t2].pos;
                         continue;
                     }
@@ -3694,6 +3701,8 @@ pub(crate) fn add_result_multiterm_singlefield(
         min_heap::Result {
             doc_id: docid,
             score: bm25,
+
+            ..Default::default()
         },
         top_k,
     );

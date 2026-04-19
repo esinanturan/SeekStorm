@@ -9,9 +9,9 @@ use smallvec::SmallVec;
 use crate::{
     add_result::{B, K, SIGMA, facet_count, is_facet_filter, read_multifield_vec},
     index::{
-        AccessType, DOCUMENT_LENGTH_COMPRESSION, DUMMY_VEC_8, NgramType,
+        AccessType, DOCUMENT_LENGTH_COMPRESSION, DUMMY_VEC_8, LexicalSimilarity, NgramType,
         NonUniquePostingListObjectQuery, NonUniqueTermObject, PostingListObjectQuery, STOP_BIT,
-        Shard, SimilarityType, TermObject, hash32, hash64,
+        Shard, TermObject, hash32, hash64,
     },
     min_heap,
     search::{FilterSparse, QueryType, ResultType, SearchResult, decode_posting_list_counts},
@@ -139,6 +139,8 @@ pub(crate) fn add_result_singleterm_uncommitted(
         min_heap::Result {
             doc_id: docid,
             score: bm25,
+
+            ..Default::default()
         },
         top_k,
     );
@@ -284,6 +286,7 @@ pub(crate) fn add_result_multiterm_uncommitted(
                     std::cmp::Ordering::Equal => {
                         if t2 + 1 < non_unique_query_list.len() {
                             t2 += 1;
+
                             pos2 = non_unique_query_list[t2].pos;
                             continue;
                         }
@@ -418,6 +421,7 @@ pub(crate) fn add_result_multiterm_uncommitted(
                         std::cmp::Ordering::Equal => {
                             if t2 + 1 < non_unique_query_list.len() {
                                 t2 += 1;
+
                                 pos2 = non_unique_query_list[t2].pos;
                                 continue;
                             }
@@ -494,6 +498,8 @@ pub(crate) fn add_result_multiterm_uncommitted(
         min_heap::Result {
             doc_id: docid,
             score: bm25,
+
+            ..Default::default()
         },
         top_k,
     );
@@ -914,7 +920,7 @@ impl Shard {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn search_uncommitted(
+    pub(crate) fn search_lexical_shard_uncommitted(
         &self,
         unique_terms: &AHashMap<String, TermObject>,
         non_unique_terms: &[NonUniqueTermObject],
@@ -983,7 +989,7 @@ impl Shard {
                         };
 
                         if non_unique_term.ngram_type == NgramType::SingleTerm
-                            || self.meta.similarity == SimilarityType::Bm25fProximity
+                            || self.meta.lexical_similarity == LexicalSimilarity::Bm25fProximity
                         {
                             let posting_count = if let Some(posting_count) = posting_counts_option {
                                 posting_count.0 as usize + value1.posting_count
@@ -1675,7 +1681,7 @@ impl Shard {
                             as u16;
                         field_vec.push((field_id, 4));
                         if phrase_query {
-                            let position_bits_1 = position_bits >> 2;
+                            let position_bits_1 = position_bits >> 2; // /4;
                             let position_bits_2 = (position_bits - position_bits_1) / 3;
                             let position_bits_3 =
                                 (position_bits - position_bits_1 - position_bits_2) >> 1;

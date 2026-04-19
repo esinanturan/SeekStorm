@@ -6,8 +6,8 @@ use crate::{
     add_result::{B, K, SIGMA, decode_positions_commit},
     compatible::_lzcnt_u32,
     index::{
-        AccessType, CompressionType, DOCUMENT_LENGTH_COMPRESSION, NgramType, STOP_BIT, Shard,
-        SimilarityType, hash32, hash64, int_to_byte4,
+        AccessType, CompressionType, DOCUMENT_LENGTH_COMPRESSION, LexicalSimilarity, NgramType,
+        STOP_BIT, Shard, hash32, hash64, int_to_byte4,
     },
     search::decode_posting_list_count,
     utils::{
@@ -527,7 +527,7 @@ pub(crate) fn docid_iterator(
     }
 
     if plo.ngram_type == NgramType::SingleTerm
-        || shard.meta.similarity == SimilarityType::Bm25fProximity
+        || shard.meta.lexical_similarity == LexicalSimilarity::Bm25fProximity
     {
         let mut posting_score = 0.0;
         for field in field_vec.iter() {

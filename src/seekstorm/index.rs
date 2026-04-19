@@ -4,23 +4,23 @@ use futures::future;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use memmap2::{Mmap, MmapMut, MmapOptions};
+use model2vec_rs::model::StaticModel;
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
-use num_format::{Locale, ToFormattedString};
-
-use snowball_stemmers_rs::{Algorithm, Stemmer};
 use search::{QueryType, Search};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smallvec::SmallVec;
+use snowball_stemmers_rs::{Algorithm, Stemmer};
 use std::{
     collections::{HashMap, VecDeque},
+    fmt::{self},
     fs::{self, File},
     hint,
     io::{BufRead, BufReader, Read, Seek, Write},
     path::Path,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Instant,
 };
 use symspell_complete_rs::{PruningRadixTrie, SymSpell};
@@ -32,17 +32,20 @@ use utoipa::ToSchema;
 use crate::word_segmentation::WordSegmentationTM;
 use crate::{
     add_result::{self, B, K, SIGMA},
+    clustering::{ClusterHeader, ParentMedoid},
     commit::Commit,
     geo_search::encode_morton_2_d,
     search::{
         self, FacetFilter, Point, QueryFacet, QueryRewriting, Ranges, ResultObject, ResultSort,
-        ResultType, SearchShard,
+        ResultType, SearchLexicalShard, SearchMode,
     },
     tokenizer::tokenizer,
     utils::{
         self, read_u8_ref, read_u16, read_u16_ref, read_u32_ref, read_u64, read_u64_ref, write_f32,
         write_f64, write_i8, write_i16, write_i32, write_i64, write_u32, write_u64,
     },
+    vector::{Inference, Model, Precision, Quantization, VectorHeader, read_min_max},
+    vector_similarity::VectorSimilarity,
 };
 
 #[cfg(all(target_feature = "aes", target_feature = "sse2", feature = "gx"))]
@@ -62,6 +65,8 @@ pub(crate) const DICTIONARY_FILENAME: &str = "dictionary.csv";
 pub(crate) const COMPLETIONS_FILENAME: &str = "completions.csv";
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub(crate) const VECTOR_FILENAME: &str = "vector.bin";
 
 const INDEX_HEADER_SIZE: u64 = 4;
 /// Incompatible index  format change: new library can't open old format, and old library can't open new format
@@ -84,6 +89,17 @@ pub(crate) const POSTING_BUFFER_SIZE: usize = 400_000_000;
 pub(crate) const MAX_QUERY_TERM_NUMBER: usize = 100;
 pub(crate) const SEGMENT_KEY_CAPACITY: usize = 1000;
 
+use tabled::Tabled;
+
+/// Information about the index, such as number of documents, number of terms, index size, etc. Displayed in the console.
+#[derive(Tabled, Clone)]
+pub struct Info {
+    /// Label
+    pub entry: &'static str,
+    /// Value
+    pub value: String,
+}
+
 /// A document is a flattened, single level of key-value pairs, where key is an arbitrary string, and value represents any valid JSON value.
 pub type Document = IndexMap<String, Value>;
 
@@ -101,14 +117,25 @@ pub enum FileType {
 /// Compression type for document store
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, ToSchema)]
 pub enum DocumentCompression {
-    /// No compression: fastest, largest size
+    /// No compression (fastest, largest size)
     None,
-    /// lz4 compression: fast compression/decompression (faster than snappy), medium size (larger than snappy)
+    /// lz4 compression (fast compression/decompression (faster than snappy), medium size (larger than snappy))
     Lz4,
-    /// snappy compression: fast compression/decompression (slower than lz4), medium size (smaller than lz4)
+    /// snappy compression (fast compression/decompression (slower than lz4), medium size (smaller than lz4))
     Snappy,
-    /// zstd compression level 1: slowest compression/decompression, smallest size
+    /// zstd compression level 1 (slowest compression/decompression, smallest size)
     Zstd,
+}
+
+impl fmt::Display for DocumentCompression {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            DocumentCompression::None => write!(f, "None"),
+            DocumentCompression::Lz4 => write!(f, "Lz4"),
+            DocumentCompression::Snappy => write!(f, "Snappy"),
+            DocumentCompression::Zstd => write!(f, "Zstd"),
+        }
+    }
 }
 
 /// Defines where the index resides during search:
@@ -136,12 +163,21 @@ pub enum AccessType {
 /// - Bm25f: considers documents composed from several fields, with different field lengths and importance
 /// - Bm25fProximity: considers term proximity, e.g. for implicit phrase search with improved relevancy
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default, ToSchema)]
-pub enum SimilarityType {
+pub enum LexicalSimilarity {
     /// Bm25f considers documents composed from several fields, with different field lengths and importance
     Bm25f = 0,
     /// Bm25fProximity considers term proximity, e.g. for implicit phrase search with improved relevancy
     #[default]
     Bm25fProximity = 1,
+}
+
+impl fmt::Display for LexicalSimilarity {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            LexicalSimilarity::Bm25f => write!(f, "Bm25f"),
+            LexicalSimilarity::Bm25fProximity => write!(f, "Bm25fProximity"),
+        }
+    }
 }
 
 /// Defines tokenizer behavior:
@@ -189,6 +225,20 @@ pub enum TokenizerType {
     /// Requires feature #[cfg(feature = "zh")]
     #[cfg(feature = "zh")]
     UnicodeAlphanumericZH = 5,
+}
+
+impl fmt::Display for TokenizerType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TokenizerType::AsciiAlphabetic => write!(f, "AsciiAlphabetic"),
+            TokenizerType::UnicodeAlphanumeric => write!(f, "UnicodeAlphanumeric"),
+            TokenizerType::UnicodeAlphanumericFolded => write!(f, "UnicodeAlphanumericFolded"),
+            TokenizerType::Whitespace => write!(f, "Whitespace"),
+            TokenizerType::WhitespaceLowercase => write!(f, "WhitespaceLowercase"),
+            #[cfg(feature = "zh")]
+            TokenizerType::UnicodeAlphanumericZH => write!(f, "UnicodeAlphanumericZH"),
+        }
+    }
 }
 
 /// Defines stemming behavior, reducing inflected words to their word stem, base or root form.
@@ -274,6 +324,52 @@ pub enum StemmerType {
     Ukrainian = 37,
     /// Yiddish stemmer
     Yiddish = 38,
+}
+
+impl fmt::Display for StemmerType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            StemmerType::None => write!(f, "None"),
+            StemmerType::Arabic => write!(f, "Arabic"),
+            StemmerType::Armenian => write!(f, "Armenian"),
+            StemmerType::Basque => write!(f, "Basque"),
+            StemmerType::Catalan => write!(f, "Catalan"),
+            StemmerType::Czech => write!(f, "Czech"),
+            StemmerType::Danish => write!(f, "Danish"),
+            StemmerType::Dutch => write!(f, "Dutch"),
+            StemmerType::DutchPorter => write!(f, "DutchPorter"),
+            StemmerType::English => write!(f, "English"),
+            StemmerType::Esperanto => write!(f, "Esperanto"),
+            StemmerType::Estonian => write!(f, "Estonian"),
+            StemmerType::Finnish => write!(f, "Finnish"),
+            StemmerType::French => write!(f, "French"),
+            StemmerType::German => write!(f, "German"),
+            StemmerType::Greek => write!(f, "Greek"),
+            StemmerType::Hindi => write!(f, "Hindi"),
+            StemmerType::Hungarian => write!(f, "Hungarian"),
+            StemmerType::Indonesian => write!(f, "Indonesian"),
+            StemmerType::Irish => write!(f, "Irish"),
+            StemmerType::Italian => write!(f, "Italian"),
+            StemmerType::Lithuanian => write!(f, "Lithuanian"),
+            StemmerType::Lovins => write!(f, "Lovins"),
+            StemmerType::Nepali => write!(f, "Nepali"),
+            StemmerType::Norwegian => write!(f, "Norwegian"),
+            StemmerType::Persian => write!(f, "Persian"),
+            StemmerType::Polish => write!(f, "Polish"),
+            StemmerType::Porter => write!(f, "Porter"),
+            StemmerType::Portuguese => write!(f, "Portuguese"),
+            StemmerType::Romanian => write!(f, "Romanian"),
+            StemmerType::Russian => write!(f, "Russian"),
+            StemmerType::Serbian => write!(f, "Serbian"),
+            StemmerType::Sesotho => write!(f, "Sesotho"),
+            StemmerType::Spanish => write!(f, "Spanish"),
+            StemmerType::Swedish => write!(f, "Swedish"),
+            StemmerType::Tamil => write!(f, "Tamil"),
+            StemmerType::Turkish => write!(f, "Turkish"),
+            StemmerType::Ukrainian => write!(f, "Ukrainian"),
+            StemmerType::Yiddish => write!(f, "Yiddish"),
+        }
+    }
 }
 
 pub(crate) struct LevelIndex {
@@ -607,14 +703,18 @@ fn default_as_true() -> bool {
 }
 
 /// Defines a field in index schema: field, stored, indexed , field_type, facet, boost.
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema, Default)]
 pub struct SchemaField {
     /// unique name of a field
     pub field: String,
     /// only stored fields are returned in the search results
-    pub stored: bool,
+    pub store: bool,
     /// only indexed fields can be searched
-    pub indexed: bool,
+    pub index_lexical: bool,
+    /// only indexed fields can be searched
+    #[serde(skip_serializing_if = "is_default_bool")]
+    #[serde(default = "default_false")]
+    pub index_vector: bool,
     /// type of a field
     pub field_type: FieldType,
     /// optional faceting for a field
@@ -660,8 +760,9 @@ pub struct SchemaField {
 /// Defines a field in index schema: field, stored, indexed , field_type, facet, boost.
 /// # Parameters
 /// - field: unique name of a field
-/// - stored: only stored fields are returned in the search results
-/// - indexed: only indexed fields can be searched
+/// - store: only stored fields are returned in the search results
+/// - index_lexical: index field into lexical index, only indexed fields can be searched.
+/// - index_vector: index field into vector index, only indexed fields can be searched.
 /// - field_type: type of a field: u8, u16, u32, u64, i8, i16, i32, i64, f32, f64, point
 /// - facet: enable faceting for a field: for sorting results by field values, for range filtering, for result count per field value or range
 /// - `longest`: This allows to annotate (manually set) the longest field in schema.  
@@ -673,15 +774,16 @@ pub struct SchemaField {
 /// # Example
 /// ```rust
 /// use seekstorm::index::{SchemaField, FieldType};
-/// let schema_field = SchemaField::new("title".to_string(), true, true, FieldType::String16, false, false, 1.0, false, false);
+/// let schema_field = SchemaField::new("title".to_string(), true, true, false, FieldType::String16, false, false, 1.0, false, false);
 /// ```
 impl SchemaField {
     /// Creates a new SchemaField.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         field: String,
-        stored: bool,
-        indexed: bool,
+        store: bool,
+        index_lexical: bool,
+        index_vector: bool,
         field_type: FieldType,
         facet: bool,
         longest: bool,
@@ -691,8 +793,9 @@ impl SchemaField {
     ) -> Self {
         SchemaField {
             field,
-            stored,
-            indexed,
+            store,
+            index_lexical,
+            index_vector,
             field_type,
             facet,
             longest,
@@ -812,7 +915,29 @@ pub struct QueryCompletion {
     pub max_completion_entries: usize,
 }
 
-/// Specifies SimilarityType, TokenizerType and AccessType when creating an new index
+/// Clustering defines the clustering behavior for approximate nearest neighbor (ANN) search: None, Auto, Fixed(usize).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Default, ToSchema)]
+pub enum Clustering {
+    /// Exhaustive vector search, no clustering/ANN.
+    None,
+    /// The number of clusters is automatically determined depending on the number of vectors per level and shard.
+    #[default]
+    Auto,
+    /// Set the number of clusters to a fixed value per level and shard.
+    Fixed(usize),
+}
+
+impl fmt::Display for Clustering {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Clustering::None => write!(f, "None"),
+            Clustering::Auto => write!(f, "Auto"),
+            Clustering::Fixed(value) => write!(f, "Fixed({})", value),
+        }
+    }
+}
+
+/// Specifies LexicalSimilarity, TokenizerType and AccessType when creating an new index
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct IndexMetaObject {
     /// unique index ID
@@ -821,8 +946,8 @@ pub struct IndexMetaObject {
     pub id: u64,
     /// index name: used informational purposes
     pub name: String,
-    /// SimilarityType defines the scoring and ranking of the search results: Bm25f or Bm25fProximity
-    pub similarity: SimilarityType,
+    /// LexicalSimilarity defines the scoring and ranking of the search results: Bm25f or Bm25fProximity
+    pub lexical_similarity: LexicalSimilarity,
     /// TokenizerType defines the tokenizer behavior: AsciiAlphabetic, UnicodeAlphanumeric, UnicodeAlphanumericFolded, UnicodeAlphanumericZH
     pub tokenizer: TokenizerType,
     /// StemmerType defines the stemming behavior: None, Arabic, Armenian, Danish, Dutch, English, French, German, Greek, Hungarian, Italian, Norwegian, Portuguese, Romanian, Russian, Spanish, Swedish, Tamil, Turkish
@@ -851,13 +976,10 @@ pub struct IndexMetaObject {
     /// NgramRFF   = 0b00010000, rare frequent frequent
     /// NgramFFR   = 0b00100000, frequent frequent rare
     /// NgramFRF   = 0b01000000, frequent rare frequent
-    ///
     /// When **minimum index size** is more important than phrase query latency, we recommend **Single Terms**:  
     /// `NgramSet::SingleTerm as u8`
-    ///
     /// For a **good balance of latency and index size** cost, we recommend **Single Terms + Frequent Bigrams + Frequent Trigrams** (default):  
     /// `NgramSet::SingleTerm as u8 | NgramSet::NgramFF as u8 | NgramSet::NgramFFF`
-    ///
     /// When **minimal phrase query latency** is more important than low index size, we recommend **Single Terms + Mixed Bigrams + Frequent Trigrams**:
     /// `NgramSet::SingleTerm as u8 | NgramSet::NgramFF as u8 | NgramSet::NgramFR as u8 | NgramSet::NgramRF | NgramSet::NgramFFF`
     #[serde(default = "ngram_indexing_default")]
@@ -890,6 +1012,14 @@ pub struct IndexMetaObject {
     /// ⚠️ Deriving completions from indexed documents increases the indexing time and index size.
     #[serde(default)]
     pub query_completion: Option<QueryCompletion>,
+
+    /// clustering defines the clustering behavior for approximate nearest neighbor (ANN) search: None, Auto, Fixed(usize).
+    #[serde(default)]
+    pub clustering: Clustering,
+
+    /// vector source: External vectors field (Json array field or Base64 encoded text field) or internal vector generation from text field via model2vec
+    #[serde(default)]
+    pub inference: Inference,
 }
 
 fn ngram_indexing_default() -> u8 {
@@ -1001,10 +1131,12 @@ pub struct FacetField {
     /// The number of distinct string values and numerical ranges per facet field (cardinality) is limited to 65_536.
     /// Once that number is reached, the facet field is not updated anymore (no new values are added, no existing values are counted).
     pub values: IndexMap<String, (Vec<String>, usize)>,
-    /// Minimum value of the facet field
+
+    ///Minimum value of the facet field
     pub min: ValueType,
-    /// Maximum value of the facet field
+    ///Maximum value of the facet field
     pub max: ValueType,
+
     #[serde(skip)]
     pub(crate) offset: usize,
     #[serde(skip)]
@@ -1030,9 +1162,14 @@ pub struct Shard {
     pub index_format_version_minor: u16,
 
     /// Number of indexed documents
-    pub(crate) indexed_doc_count: usize,
+    pub indexed_doc_count: usize,
+    /// Number of indexed vectors
+    pub(crate) indexed_vector_count: usize,
+    /// Number of indexed clusters
+    pub(crate) indexed_cluster_count: usize,
+
     /// Number of committed documents
-    pub(crate) committed_doc_count: usize,
+    pub committed_doc_count: usize,
     /// The index countains indexed, but uncommitted documents. Documents will either committed automatically once the number exceeds 64K documents, or once commit is invoked manually.
     pub(crate) uncommitted: bool,
 
@@ -1043,12 +1180,13 @@ pub struct Shard {
     pub schema_map: HashMap<String, SchemaField>,
     /// List of stored fields in the index: get_document and highlighter work only with stored fields
     pub stored_field_names: Vec<String>,
-    /// Specifies SimilarityType, TokenizerType and AccessType when creating an new index
+    /// Specifies LexicalSimilarity, TokenizerType and AccessType when creating an new index
     pub meta: IndexMetaObject,
 
     pub(crate) is_last_level_incomplete: bool,
     pub(crate) last_level_index_file_start_pos: u64,
     pub(crate) last_level_docstore_file_start_pos: u64,
+    pub(crate) last_level_vector_file_start_pos: u64,
 
     /// Number of allowed parallel indexed documents (default=available_parallelism). Can be used to detect wehen all indexing processes are finished.
     pub(crate) permits: Arc<Semaphore>,
@@ -1133,6 +1271,23 @@ pub struct Shard {
     pub(crate) key_head_size: usize,
     pub(crate) level_terms: AHashMap<u32, String>,
     pub(crate) level_completions: Arc<RwLock<AHashMap<Vec<String>, usize>>>,
+
+    pub(crate) is_avx2: bool,
+    pub(crate) is_vector_indexing: bool,
+    pub(crate) is_lexical_indexing: bool,
+    pub(crate) chunks_meta: Vec<(u16, u32, u32)>,
+    pub(crate) chunks_string: Vec<String>,
+    pub(crate) vector_file: File,
+    pub(crate) vector_file_mmap: Mmap,
+    pub(crate) block_vector_buffer: Vec<ParentMedoid>,
+    pub(crate) vector_dimensions: usize,
+    pub(crate) vector_precision: Precision,
+    pub(crate) quantization: Quantization,
+    pub(crate) vector_similarity: VectorSimilarity,
+    pub(crate) chunk_size: usize,
+
+    pub(crate) min_vector_value: f32,
+    pub(crate) max_vector_value: f32,
 }
 
 /// The root object of the index. It contains all levels and all segments of the index.
@@ -1145,15 +1300,18 @@ pub struct Index {
 
     /// Number of indexed documents
     pub(crate) indexed_doc_count: usize,
+    /// Number of indexed vectors
+    pub indexed_vector_count: usize,
+    /// Number of indexed clusters
+    pub indexed_cluster_count: usize,
 
     /// Number of deleted documents
     pub(crate) deleted_doc_count: usize,
-
     /// Defines a field in index schema: field, stored, indexed , field_type, facet, boost.
     pub schema_map: HashMap<String, SchemaField>,
     /// List of stored fields in the index: get_document and highlighter work only with stored fields
     pub stored_field_names: Vec<String>,
-    /// Specifies SimilarityType, TokenizerType and AccessType when creating an new index
+    /// Specifies LexicalSimilarity, TokenizerType and AccessType when creating an new index
     pub meta: IndexMetaObject,
 
     pub(crate) index_file: File,
@@ -1183,6 +1341,19 @@ pub struct Index {
     pub(crate) completion_option: Option<Arc<RwLock<PruningRadixTrie>>>,
 
     pub(crate) frequent_hashset: AHashSet<String>,
+
+    pub(crate) embedding_model_option: Option<StaticModel>,
+    /// The precision of the vectors: Float32 or Int8
+    pub vector_precision: Precision,
+    pub(crate) quantization: Quantization,
+    /// The dimensions of the vectors: e.g. 64, 128, 256, 512, 1024, 768, 1536, 2048, 4096
+    pub vector_dimensions: usize,
+    pub(crate) vector_similarity: VectorSimilarity,
+    /// AVX2 support enabled
+    pub is_avx2: bool,
+    pub(crate) is_vector_indexing: bool,
+    pub(crate) is_lexical_indexing: bool,
+    pub(crate) chunk_size: usize,
 }
 
 ///SynonymItem is a vector of tuples: (synonym term, (64-bit synonym term hash, 64-bit synonym term hash))
@@ -1225,7 +1396,7 @@ pub(crate) fn get_synonyms_map(
                         *item = item
                             .clone()
                             .into_iter()
-                            .chain(new_synonyms.into_iter())
+                            .chain(new_synonyms)
                             .collect::<HashMap<String, (u64, u32)>>()
                             .into_iter()
                             .collect();
@@ -1354,9 +1525,6 @@ pub(crate) async fn create_index_root(
 
     let file_path = Path::new(index_path_string).join(FILE_PATH);
     if !file_path.exists() {
-        if !mute {
-            println!("index directory created: {} ", file_path.display());
-        }
         fs::create_dir_all(file_path).unwrap();
     }
 
@@ -1368,10 +1536,18 @@ pub(crate) async fn create_index_root(
         .open(Path::new(index_path).join(INDEX_FILENAME))
     {
         Ok(index_file) => {
+            let mut is_vector_indexing = false;
+            let mut is_lexical_indexing = false;
             let mut schema = schema.clone();
             for schema_field in schema.iter_mut() {
-                if schema_field.field_type == FieldType::Binary && schema_field.indexed {
-                    schema_field.indexed = false;
+                if schema_field.field_type == FieldType::Binary && schema_field.index_lexical {
+                    schema_field.index_lexical = false;
+                }
+                if schema_field.index_vector {
+                    is_vector_indexing = true;
+                }
+                if schema_field.index_lexical {
+                    is_lexical_indexing = true;
                 }
             }
 
@@ -1389,7 +1565,7 @@ pub(crate) async fn create_index_root(
                 let mut schema_field_clone = schema_field.clone();
 
                 schema_field_clone.indexed_field_id = indexed_field_vec.len();
-                if schema_field.longest && schema_field.indexed {
+                if schema_field.longest && schema_field.index_lexical {
                     longest_field_id_option = Some(schema_field_clone.indexed_field_id);
                 }
 
@@ -1429,7 +1605,7 @@ pub(crate) async fn create_index_root(
                     facets_size_sum += facet_size;
                 }
 
-                if schema_field.indexed {
+                if schema_field.index_lexical || schema_field.index_vector {
                     indexed_field_vec.push(IndexedField {
                         schema_field_name: schema_field.field.clone(),
                         is_longest_field: false,
@@ -1440,7 +1616,7 @@ pub(crate) async fn create_index_root(
                     document_length_compressed_array.push([0; ROARING_BLOCK_SIZE]);
                 }
 
-                if schema_field.stored {
+                if schema_field.store {
                     stored_field_names.push(schema_field.field.clone());
                 }
             }
@@ -1467,6 +1643,147 @@ pub(crate) async fn create_index_root(
                 num_cpus::get_physical()
             };
 
+            let (
+                vector_dimensions,
+                embedding_model_option,
+                vector_precision,
+                chunk_size,
+                quantization,
+                vector_similarity,
+            ) = if is_vector_indexing {
+                let (
+                    dimensions,
+                    model_path,
+                    precision,
+                    chunk_size,
+                    quantization,
+                    vector_similarity,
+                ) = match &meta.inference {
+                    Inference::Model2Vec {
+                        model,
+                        chunk_size,
+                        quantization,
+                    } => {
+                        let chunk_size = *chunk_size.max(&10);
+                        match model {
+                            Model::PotionBase2M => (
+                                0,
+                                "minishlab/potion-base-2M",
+                                Precision::F32,
+                                chunk_size,
+                                *quantization,
+                                VectorSimilarity::Cosine,
+                            ),
+                            Model::PotionBase4M => (
+                                0,
+                                "minishlab/potion-base-4M",
+                                Precision::F32,
+                                chunk_size,
+                                *quantization,
+                                VectorSimilarity::Cosine,
+                            ),
+                            Model::PotionBase8M => (
+                                0,
+                                "minishlab/potion-base-8M",
+                                Precision::F32,
+                                chunk_size,
+                                *quantization,
+                                VectorSimilarity::Cosine,
+                            ),
+                            Model::PotionBase32M => (
+                                0,
+                                "minishlab/potion-base-32M",
+                                Precision::F32,
+                                chunk_size,
+                                *quantization,
+                                VectorSimilarity::Cosine,
+                            ),
+                            Model::PotionMultilingual128M => (
+                                0,
+                                "minishlab/potion-multilingual-128M",
+                                Precision::F32,
+                                chunk_size,
+                                *quantization,
+                                VectorSimilarity::Cosine,
+                            ),
+                            Model::PotionRetrieval32M => (
+                                0,
+                                "minishlab/potion-retrieval-32M",
+                                Precision::F32,
+                                chunk_size,
+                                *quantization,
+                                VectorSimilarity::Cosine,
+                            ),
+                        }
+                    }
+                    Inference::Model2VecCustom {
+                        path,
+                        chunk_size,
+                        quantization,
+                    } => (
+                        0,
+                        path.as_str(),
+                        Precision::F32,
+                        *chunk_size,
+                        *quantization,
+                        VectorSimilarity::Cosine,
+                    ),
+                    Inference::External {
+                        dimensions: vector_dimensions,
+                        precision: vector_precision,
+                        quantization: vector_quantization,
+                        similarity,
+                    } => (
+                        *vector_dimensions,
+                        "",
+                        *vector_precision,
+                        0,
+                        *vector_quantization,
+                        *similarity,
+                    ),
+                    Inference::None => (
+                        0,
+                        "",
+                        Precision::None,
+                        0,
+                        Quantization::None,
+                        VectorSimilarity::Cosine,
+                    ),
+                };
+
+                if !model_path.is_empty() {
+                    let model =
+                        Some(StaticModel::from_pretrained(model_path, None, None, None).unwrap());
+                    let dimensions = model.as_ref().unwrap().encode(&["test".to_string()])[0].len();
+                    (
+                        dimensions,
+                        model,
+                        precision,
+                        chunk_size,
+                        quantization,
+                        VectorSimilarity::Cosine,
+                    )
+                } else {
+                    (
+                        dimensions,
+                        None,
+                        precision,
+                        chunk_size,
+                        quantization,
+                        vector_similarity,
+                    )
+                }
+            } else {
+                (
+                    0,
+                    None,
+                    Precision::None,
+                    0,
+                    Quantization::None,
+                    VectorSimilarity::Cosine,
+                )
+            };
+
             let mut shard_vec: Vec<Arc<RwLock<Shard>>> = Vec::new();
             let mut shard_queue = VecDeque::<usize>::new();
             if serialize_schema {
@@ -1480,6 +1797,7 @@ pub(crate) async fn create_index_root(
                         let shard_path = index_path_clone2.join("shards").join(i.to_string());
                         let mut shard_meta = meta_clone.clone();
                         shard_meta.id = i as u64;
+
                         let mut shard = create_shard(
                             &shard_path,
                             &shard_meta,
@@ -1492,6 +1810,13 @@ pub(crate) async fn create_index_root(
                         )
                         .unwrap();
                         shard.shard_number = shard_number;
+                        shard.vector_dimensions = vector_dimensions;
+                        shard.vector_precision = vector_precision;
+                        shard.quantization = quantization;
+                        shard.vector_similarity = vector_similarity;
+                        shard.is_avx2 = *IS_AVX2;
+                        shard.chunk_size = chunk_size;
+
                         let shard_arc = Arc::new(RwLock::new(shard));
                         (shard_arc, i)
                     }));
@@ -1515,6 +1840,8 @@ pub(crate) async fn create_index_root(
 
                 compressed_index_segment_block_buffer: vec![0; 10_000_000],
                 indexed_doc_count: 0,
+                indexed_vector_count: 0,
+                indexed_cluster_count: 0,
                 deleted_doc_count: 0,
                 segment_number1: 0,
                 segment_number_mask1: 0,
@@ -1559,6 +1886,16 @@ pub(crate) async fn create_index_root(
                     .map(|_query_completion| Arc::new(RwLock::new(PruningRadixTrie::new()))),
 
                 frequent_hashset,
+
+                embedding_model_option,
+                vector_dimensions,
+                vector_precision,
+                quantization,
+                vector_similarity,
+                is_avx2: *IS_AVX2,
+                is_vector_indexing,
+                is_lexical_indexing,
+                chunk_size,
             };
 
             let file_len = index.index_file.metadata().unwrap().len();
@@ -1697,6 +2034,14 @@ pub(crate) fn create_shard(
                 .open(Path::new(index_path).join(FACET_FILENAME))
                 .unwrap();
 
+            let vector_file = File::options()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(Path::new(index_path).join(VECTOR_FILENAME))
+                .unwrap();
+
             let mut document_length_compressed_array: Vec<[u8; ROARING_BLOCK_SIZE]> = Vec::new();
             let mut indexed_field_vec: Vec<IndexedField> = Vec::new();
             let mut facets_vec: Vec<FacetField> = Vec::new();
@@ -1705,11 +2050,21 @@ pub(crate) fn create_shard(
             let mut schema_map: HashMap<String, SchemaField> = HashMap::new();
             let mut indexed_schema_vec: Vec<SchemaField> = Vec::new();
             let mut stored_fields_flag = false;
+            let mut is_vector_indexing = false;
+            let mut is_lexical_indexing = false;
             let mut stored_field_names = Vec::new();
             let mut facets_size_sum = 0;
             for (i, schema_field) in schema.iter().enumerate() {
+                if schema_field.index_vector {
+                    is_vector_indexing = true;
+                }
+                if schema_field.index_lexical {
+                    is_lexical_indexing = true;
+                }
                 let mut schema_field_clone = schema_field.clone();
+
                 schema_field_clone.indexed_field_id = indexed_field_vec.len();
+
                 schema_field_clone.field_id = i;
                 schema_map.insert(schema_field.field.clone(), schema_field_clone.clone());
 
@@ -1746,7 +2101,7 @@ pub(crate) fn create_shard(
                     facets_size_sum += facet_size;
                 }
 
-                if schema_field.indexed {
+                if schema_field.index_lexical || schema_field.index_vector {
                     indexed_field_vec.push(IndexedField {
                         schema_field_name: schema_field.field.clone(),
                         is_longest_field: false,
@@ -1757,7 +2112,7 @@ pub(crate) fn create_shard(
                     document_length_compressed_array.push([0; ROARING_BLOCK_SIZE]);
                 }
 
-                if schema_field.stored {
+                if schema_field.store {
                     stored_fields_flag = true;
                     stored_field_names.push(schema_field.field.clone());
                 }
@@ -1810,6 +2165,9 @@ pub(crate) fn create_shard(
             } else {
                 unsafe { MmapMut::map_mut(&facets_file).expect("Unable to create Mmap") }
             };
+
+            let vector_file_mmap =
+                unsafe { Mmap::map(&vector_file).expect("Unable to create Mmap") };
 
             let synonyms_map = get_synonyms_map(synonyms, segment_number_mask1);
 
@@ -1939,6 +2297,7 @@ pub(crate) fn create_shard(
                 is_last_level_incomplete: false,
                 last_level_index_file_start_pos: 0,
                 last_level_docstore_file_start_pos: 0,
+                last_level_vector_file_start_pos: 0,
                 positions_sum_normalized: 0,
                 segment_number1: 0,
                 segment_number_bits1,
@@ -2004,6 +2363,24 @@ pub(crate) fn create_shard(
                 },
                 level_terms: AHashMap::new(),
                 level_completions: Arc::new(RwLock::new(AHashMap::with_capacity(200_000))),
+
+                chunks_meta: Vec::new(),
+                chunks_string: Vec::new(),
+                vector_file,
+                vector_file_mmap,
+                indexed_vector_count: 0,
+                indexed_cluster_count: 0,
+                is_vector_indexing,
+                is_lexical_indexing,
+                block_vector_buffer: Vec::new(),
+                vector_dimensions: 0,
+                vector_precision: Precision::None,
+                quantization: Quantization::None,
+                vector_similarity: VectorSimilarity::Dot,
+                is_avx2: false,
+                chunk_size: 0,
+                min_vector_value: f32::MAX,
+                max_vector_value: f32::MIN,
             };
 
             let file_len = index.index_file.metadata().unwrap().len();
@@ -2188,7 +2565,7 @@ pub(crate) fn get_max_score(
     );
 
     if ngram_type == &NgramType::SingleTerm
-        || index.meta.similarity == SimilarityType::Bm25fProximity
+        || index.meta.lexical_similarity == LexicalSimilarity::Bm25fProximity
     {
         let idf = (((index.indexed_doc_count as f32 - posting_count as f32 + 0.5)
             / (posting_count as f32 + 0.5))
@@ -2420,13 +2797,26 @@ pub(crate) fn update_list_max_impact_score(index: &mut Shard) {
 /// Loads the index from disk into RAM or MMAP.
 /// * `index_path` - index path.  
 /// * `mute` - prevent emitting status messages (e.g. when using pipes for data interprocess communication).  
-pub(crate) async fn open_shard(index_path: &Path, mute: bool) -> Result<ShardArc, String> {
+pub(crate) async fn open_shard(
+    index_path: &Path,
+    mute: bool,
+    vector_type: Precision,
+    vector_dimensions: usize,
+) -> Result<ShardArc, String> {
     if !mute {
         println!("opening index ...");
     }
 
     let mut index_mmap_position = INDEX_HEADER_SIZE as usize;
     let mut docstore_mmap_position = 0;
+
+    let vector_size = size_of::<VectorHeader>()
+        + (vector_dimensions
+            * match vector_type {
+                Precision::F32 => 4,
+                Precision::I8 => 1,
+                Precision::None => 0,
+            });
 
     match File::open(Path::new(index_path).join(META_FILENAME)) {
         Ok(meta_file) => {
@@ -2900,6 +3290,44 @@ pub(crate) async fn open_shard(index_path: &Path, mute: bool) -> Result<ShardArc
                             shard.is_last_level_incomplete =
                                 !shard.committed_doc_count.is_multiple_of(ROARING_BLOCK_SIZE);
 
+                            if shard.is_vector_indexing && !shard.vector_file_mmap.is_empty() {
+                                shard.indexed_vector_count = 0;
+
+                                let mut offset = 0;
+                                for _level_id in 0..shard.level_index.len() {
+                                    shard.last_level_vector_file_start_pos = offset as u64;
+
+                                    let cluster_number_bytes =
+                                        &shard.vector_file_mmap[offset..offset + 4];
+                                    let cluster_number = u32::from_le_bytes(
+                                        cluster_number_bytes.try_into().unwrap(),
+                                    )
+                                        as usize;
+                                    offset += 4;
+
+                                    let mut level_vectors_count = 0;
+                                    let mut start_index = 0;
+                                    for _i in 0..cluster_number {
+                                        let cluster_header_bytes =
+                                            &shard.vector_file_mmap[offset..offset + 4];
+                                        let cluster_header = ClusterHeader {
+                                            start_index,
+                                            child_count: u32::from_le_bytes(
+                                                cluster_header_bytes.try_into().unwrap(),
+                                            ),
+                                        };
+                                        offset += 4;
+                                        start_index += cluster_header.child_count;
+                                        level_vectors_count += cluster_header.child_count;
+                                    }
+
+                                    shard.indexed_vector_count += level_vectors_count as usize;
+                                    shard.indexed_cluster_count += cluster_number;
+
+                                    offset += level_vectors_count as usize * vector_size;
+                                }
+                            }
+
                             for (i, component) in shard.bm25_component_cache.iter_mut().enumerate()
                             {
                                 let document_length_quotient = DOCUMENT_LENGTH_COMPRESSION[i]
@@ -2946,11 +3374,7 @@ pub(crate) async fn open_shard(index_path: &Path, mute: bool) -> Result<ShardArc
 /// Loads the index from disk into RAM or MMAP.
 /// * `index_path` - index path.  
 /// * `mute` - prevent emitting status messages (e.g. when using pipes for data interprocess communication).  
-pub async fn open_index(index_path: &Path, mute: bool) -> Result<IndexArc, String> {
-    if !mute {
-        println!("opening index ...");
-    }
-
+pub async fn open_index(index_path: &Path, _mute: bool) -> Result<IndexArc, String> {
     let start_time = Instant::now();
 
     match File::open(Path::new(index_path).join(META_FILENAME)) {
@@ -3006,10 +3430,15 @@ pub async fn open_index(index_path: &Path, mute: bool) -> Result<IndexArc, Strin
                                 );
                             }
 
-                            let mut level_count = 0;
-
                             let mut shard_vec: Vec<Arc<RwLock<Shard>>> = Vec::new();
                             let mut shard_queue = VecDeque::<usize>::new();
+
+                            let vector_type = match index_arc.read().await.quantization {
+                                Quantization::I8 => Precision::I8,
+                                _ => index_arc.read().await.vector_precision,
+                            };
+
+                            let dimensions = index_arc.read().await.vector_dimensions;
 
                             let paths: Vec<_> = fs::read_dir(index_path.join("shards"))
                                 .unwrap()
@@ -3019,21 +3448,57 @@ pub async fn open_index(index_path: &Path, mute: bool) -> Result<IndexArc, Strin
                             let index_path_clone = Arc::new(index_path.to_path_buf());
                             for i in 0..paths.len() {
                                 let index_path_clone2 = index_path_clone.clone();
+                                let vector_type_clone = vector_type;
+                                let dimensions_clone = dimensions;
                                 shard_handle_vec.push(tokio::spawn(async move {
                                     let path = index_path_clone2.join("shards").join(i.to_string());
 
-                                    open_shard(&path, true).await.unwrap()
+                                    open_shard(&path, true, vector_type_clone, dimensions_clone)
+                                        .await
+                                        .unwrap()
                                 }));
                             }
 
                             for shard_handle in shard_handle_vec {
                                 let shard_arc = shard_handle.await.unwrap();
                                 shard_arc.write().await.index_option = Some(index_arc.clone());
+
+                                shard_arc.write().await.quantization =
+                                    index_arc.read().await.quantization;
+                                shard_arc.write().await.shard_number =
+                                    index_arc.read().await.shard_number;
+                                shard_arc.write().await.vector_dimensions =
+                                    index_arc.read().await.vector_dimensions;
+                                shard_arc.write().await.vector_precision =
+                                    index_arc.read().await.vector_precision;
+                                shard_arc.write().await.vector_similarity =
+                                    index_arc.read().await.vector_similarity;
+                                shard_arc.write().await.is_avx2 = index_arc.read().await.is_avx2;
+                                shard_arc.write().await.chunk_size =
+                                    index_arc.read().await.chunk_size;
+
+                                if shard_arc.read().await.is_vector_indexing
+                                    && !shard_arc.read().await.vector_file_mmap.is_empty()
+                                    && shard_arc.read().await.quantization == Quantization::I8
+                                    && shard_arc.read().await.vector_similarity
+                                        == VectorSimilarity::Euclidean
+                                {
+                                    let (min_vector_value, max_vector_value) = read_min_max(
+                                        &shard_arc.read().await.vector_file_mmap,
+                                        shard_arc.read().await.vector_dimensions,
+                                    );
+                                    shard_arc.write().await.min_vector_value = min_vector_value;
+                                    shard_arc.write().await.max_vector_value = max_vector_value;
+                                }
+
                                 index_arc.write().await.indexed_doc_count +=
                                     shard_arc.read().await.indexed_doc_count;
+                                index_arc.write().await.indexed_vector_count +=
+                                    shard_arc.read().await.indexed_vector_count;
+                                index_arc.write().await.indexed_cluster_count +=
+                                    shard_arc.read().await.indexed_cluster_count;
                                 index_arc.write().await.deleted_doc_count +=
                                     shard_arc.read().await.delete_hashset.len();
-                                level_count += shard_arc.read().await.level_index.len();
                                 let shard_id = shard_arc.read().await.meta.id;
                                 shard_queue.push_back(shard_id as usize);
                                 shard_vec.push(shard_arc);
@@ -3041,70 +3506,11 @@ pub async fn open_index(index_path: &Path, mute: bool) -> Result<IndexArc, Strin
 
                             index_arc.write().await.shard_number = shard_vec.len();
 
-                            for shard in shard_vec.iter() {
-                                shard.write().await.shard_number = shard_vec.len();
-                            }
-
                             index_arc.write().await.shard_vec = shard_vec;
                             index_arc.write().await.shard_queue =
                                 Arc::new(RwLock::new(shard_queue));
 
-                            let elapsed_time = start_time.elapsed().as_nanos();
-
-                            if !mute {
-                                let index_ref = index_arc.read().await;
-                                println!(
-                                    "{} name {} id {} version {} {} compression {:?} shards {} level {} ngrams {:08b} fields {} {} facets {} docs {} deleted {} segments {} dictionary {} {} completions {} time {} s",
-                                    INDEX_FILENAME,
-                                    index_ref.meta.name,
-                                    index_ref.meta.id,
-                                    index_ref.index_format_version_major.to_string()
-                                        + "."
-                                        + &index_ref.index_format_version_minor.to_string(),
-                                    INDEX_FORMAT_VERSION_MAJOR.to_string()
-                                        + "."
-                                        + &INDEX_FORMAT_VERSION_MINOR.to_string(),
-                                    index_ref.meta.document_compression,
-                                    index_ref.shard_count().await,
-                                    level_count,
-                                    index_ref.meta.ngram_indexing,
-                                    index_ref.indexed_field_vec.len(),
-                                    index_ref.schema_map.len(),
-                                    index_ref.facets.len(),
-                                    index_ref.indexed_doc_count.to_formatted_string(&Locale::en),
-                                    index_ref.deleted_doc_count.to_formatted_string(&Locale::en),
-                                    index_ref.segment_number1,
-                                    if let Some(symspell) = index_ref.symspell_option.as_ref() {
-                                        symspell
-                                            .read()
-                                            .await
-                                            .get_dictionary_size()
-                                            .to_formatted_string(&Locale::en)
-                                    } else {
-                                        "None".to_string()
-                                    },
-                                    if let Some(symspell) = index_ref.symspell_option.as_ref() {
-                                        symspell
-                                            .read()
-                                            .await
-                                            .get_candidates_size()
-                                            .to_formatted_string(&Locale::en)
-                                    } else {
-                                        "None".to_string()
-                                    },
-                                    if let Some(completions) = index_ref.completion_option.as_ref()
-                                    {
-                                        completions
-                                            .read()
-                                            .await
-                                            .len()
-                                            .to_formatted_string(&Locale::en)
-                                    } else {
-                                        "None".to_string()
-                                    },
-                                    elapsed_time / 1_000_000_000
-                                );
-                            }
+                            let _elapsed_time = start_time.elapsed().as_nanos();
 
                             Ok(index_arc.clone())
                         }
@@ -3150,7 +3556,7 @@ pub(crate) async fn warmup(shard_object_arc: &ShardArc) {
     let frequent_words = shard_object_arc.read().await.frequent_words.clone();
     for frequentword in frequent_words.iter() {
         let results_list = shard_object_arc
-            .search_shard(
+            .search_lexical_shard(
                 frequentword.to_owned(),
                 QueryType::Union,
                 false,
@@ -3200,6 +3606,18 @@ pub(crate) struct NonUniqueTermObject {
     pub term_ngram_0: String,
     pub op: QueryType,
 }
+
+/// system endianess: true: the system is little endian, false: the system is big endian (network byte order).
+pub static IS_SYSTEM_LE: LazyLock<bool> = LazyLock::new(|| u16::from_ne_bytes([1, 0]) == 1);
+
+/// AVX2 support enabled
+pub static IS_AVX2: LazyLock<bool> = LazyLock::new(|| {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    let is_avx2 = is_x86_feature_detected!("avx2");
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    let is_avx2 = false;
+    is_avx2
+});
 
 #[cfg(not(all(target_feature = "aes", target_feature = "sse2", feature = "gx")))]
 use ahash::RandomState;
@@ -3404,6 +3822,22 @@ impl Shard {
                 unsafe { Mmap::map(&self.docstore_file).expect("Unable to create Mmap") };
         }
 
+        self.vector_file_mmap = unsafe {
+            MmapOptions::new()
+                .len(0)
+                .map(&self.docstore_file)
+                .expect("Unable to create Mmap")
+        };
+        let _ = self.vector_file.rewind();
+        if let Err(e) = self.vector_file.set_len(0) {
+            println!("Unable to vector_file.set_len in clear_index {:?}", e)
+        };
+        let _ = self.vector_file.flush();
+        self.vector_file_mmap =
+            unsafe { Mmap::map(&self.vector_file).expect("Unable to create Mmap") };
+        self.indexed_vector_count = 0;
+        self.indexed_cluster_count = 0;
+
         self.document_length_normalized_average = 0.0;
         self.indexed_doc_count = 0;
         self.committed_doc_count = 0;
@@ -3604,6 +4038,24 @@ impl Index {
             indexed_doc_count += shard.read().await.indexed_doc_count;
         }
         indexed_doc_count
+    }
+
+    /// Get number of indexed vectors.
+    pub async fn indexed_vector_count(&self) -> usize {
+        let mut indexed_vector_count = 0;
+        for shard in self.shard_vec.iter() {
+            indexed_vector_count += shard.read().await.indexed_vector_count;
+        }
+        indexed_vector_count
+    }
+
+    /// Get number of indexed clusters.
+    pub async fn indexed_cluster_count(&self) -> usize {
+        let mut indexed_cluster_count = 0;
+        for shard in self.shard_vec.iter() {
+            indexed_cluster_count += shard.read().await.indexed_cluster_count;
+        }
+        indexed_cluster_count
     }
 
     /// Get number of index levels. One index level comprises 64K documents.
@@ -3937,6 +4389,7 @@ impl Index {
         let _ = fs::remove_file(index_path.join(DELETE_FILENAME));
         let _ = fs::remove_file(index_path.join(FACET_FILENAME));
         let _ = fs::remove_file(index_path.join(FACET_VALUES_FILENAME));
+        let _ = fs::remove_file(index_path.join(VECTOR_FILENAME));
         let _ = fs::remove_dir(index_path);
     }
 
@@ -4073,7 +4526,6 @@ pub trait DeleteDocument {
 }
 
 /// Delete document from index by document id
-///
 /// Arguments:
 /// * `doc_id`: Document ID that specifies which document to delete from the index.
 ///   ⚠️ Use search or get_iterator first to obtain a valid doc_id. Document IDs are not guaranteed to be continuous and gapless!
@@ -4168,7 +4620,9 @@ impl DeleteDocumentsByQuery for IndexArc {
         let rlo = self
             .search(
                 query_string.to_owned(),
+                None,
                 query_type_default,
+                SearchMode::Lexical,
                 false,
                 offset,
                 length,
@@ -4347,16 +4801,15 @@ impl IndexDocumentShard for ShardArc {
         let token_per_field_max: u32 = u16::MAX as u32;
         let mut unique_terms: AHashMap<String, TermObject> = AHashMap::new();
         let mut field_vec: Vec<(usize, u8, u32, u32)> = Vec::new();
+
         let shard_ref2 = shard_arc_clone.read().await;
 
         for schema_field in schema.iter() {
-            if !schema_field.indexed {
+            if !schema_field.index_lexical {
                 continue;
             }
 
-            let field_name = &schema_field.field;
-
-            if let Some(field_value) = document.get(field_name) {
+            if let Some(field_value) = document.get(&schema_field.field) {
                 let mut non_unique_terms: Vec<NonUniqueTermObject> = Vec::new();
                 let mut nonunique_terms_count = 0u32;
 
@@ -4504,9 +4957,18 @@ impl IndexDocument2 for ShardArc {
 
         let do_commit = shard_mut.block_id != doc_id >> 16;
         if do_commit {
-            shard_mut.commit(doc_id).await;
+            if shard_mut.is_vector_indexing {
+                shard_mut.commit_vector_shard().await;
+            }
+            shard_mut.commit_lexical_shard(doc_id).await;
 
             shard_mut.block_id = doc_id >> 16;
+        }
+
+        if shard_mut.is_vector_indexing {
+            shard_mut
+                .index_vector_shard(doc_id, &document_item.document)
+                .await;
         }
 
         if !shard_mut.facets.is_empty() {
@@ -4729,66 +5191,58 @@ impl IndexDocument2 for ShardArc {
 
                             write_f64(value, &mut shard_mut.facets_file_mmap, address)
                         }
-                        FieldType::String16 => {
-                            if facet.values.len() < u16::MAX as usize {
-                                let key = serde_json::from_value::<String>(field_value.clone())
-                                    .unwrap_or(field_value.to_string());
+                        FieldType::String16 if facet.values.len() < u16::MAX as usize => {
+                            let key = serde_json::from_value::<String>(field_value.clone())
+                                .unwrap_or(field_value.to_string());
 
-                                let key_string = key.clone();
-                                let key = vec![key];
+                            let key_string = key.clone();
+                            let key = vec![key];
 
-                                facet.values.entry(key_string.clone()).or_insert((key, 0)).1 += 1;
+                            facet.values.entry(key_string.clone()).or_insert((key, 0)).1 += 1;
 
-                                let facet_value_id =
-                                    facet.values.get_index_of(&key_string).unwrap() as u16;
-                                write_u16(facet_value_id, &mut shard_mut.facets_file_mmap, address)
-                            }
+                            let facet_value_id =
+                                facet.values.get_index_of(&key_string).unwrap() as u16;
+                            write_u16(facet_value_id, &mut shard_mut.facets_file_mmap, address)
                         }
 
-                        FieldType::StringSet16 => {
-                            if facet.values.len() < u16::MAX as usize {
-                                let mut key: Vec<String> =
-                                    serde_json::from_value(field_value.clone()).unwrap();
-                                key.sort();
+                        FieldType::StringSet16 if facet.values.len() < u16::MAX as usize => {
+                            let mut key: Vec<String> =
+                                serde_json::from_value(field_value.clone()).unwrap();
+                            key.sort();
 
-                                let key_string = key.join("_");
-                                facet.values.entry(key_string.clone()).or_insert((key, 0)).1 += 1;
+                            let key_string = key.join("_");
+                            facet.values.entry(key_string.clone()).or_insert((key, 0)).1 += 1;
 
-                                let facet_value_id =
-                                    facet.values.get_index_of(&key_string).unwrap() as u16;
-                                write_u16(facet_value_id, &mut shard_mut.facets_file_mmap, address)
-                            }
+                            let facet_value_id =
+                                facet.values.get_index_of(&key_string).unwrap() as u16;
+                            write_u16(facet_value_id, &mut shard_mut.facets_file_mmap, address)
                         }
 
-                        FieldType::String32 => {
-                            if facet.values.len() < u32::MAX as usize {
-                                let key = serde_json::from_value::<String>(field_value.clone())
-                                    .unwrap_or(field_value.to_string());
+                        FieldType::String32 if facet.values.len() < u32::MAX as usize => {
+                            let key = serde_json::from_value::<String>(field_value.clone())
+                                .unwrap_or(field_value.to_string());
 
-                                let key_string = key.clone();
-                                let key = vec![key];
+                            let key_string = key.clone();
+                            let key = vec![key];
 
-                                facet.values.entry(key_string.clone()).or_insert((key, 0)).1 += 1;
+                            facet.values.entry(key_string.clone()).or_insert((key, 0)).1 += 1;
 
-                                let facet_value_id =
-                                    facet.values.get_index_of(&key_string).unwrap() as u32;
-                                write_u32(facet_value_id, &mut shard_mut.facets_file_mmap, address)
-                            }
+                            let facet_value_id =
+                                facet.values.get_index_of(&key_string).unwrap() as u32;
+                            write_u32(facet_value_id, &mut shard_mut.facets_file_mmap, address)
                         }
 
-                        FieldType::StringSet32 => {
-                            if facet.values.len() < u32::MAX as usize {
-                                let mut key: Vec<String> =
-                                    serde_json::from_value(field_value.clone()).unwrap();
-                                key.sort();
+                        FieldType::StringSet32 if facet.values.len() < u32::MAX as usize => {
+                            let mut key: Vec<String> =
+                                serde_json::from_value(field_value.clone()).unwrap();
+                            key.sort();
 
-                                let key_string = key.join("_");
-                                facet.values.entry(key_string.clone()).or_insert((key, 0)).1 += 1;
+                            let key_string = key.join("_");
+                            facet.values.entry(key_string.clone()).or_insert((key, 0)).1 += 1;
 
-                                let facet_value_id =
-                                    facet.values.get_index_of(&key_string).unwrap() as u32;
-                                write_u32(facet_value_id, &mut shard_mut.facets_file_mmap, address)
-                            }
+                            let facet_value_id =
+                                facet.values.get_index_of(&key_string).unwrap() as u32;
+                            write_u32(facet_value_id, &mut shard_mut.facets_file_mmap, address)
                         }
 
                         FieldType::Point => {
@@ -4840,7 +5294,7 @@ impl IndexDocument2 for ShardArc {
             shard_mut.indexed_field_vec[value.0].field_length_sum += value.2 as usize;
         }
 
-        if doc_id == 0 {
+        if doc_id == 0 && shard_mut.is_lexical_indexing {
             if !shard_mut.longest_field_auto {
                 longest_field_id = shard_mut.longest_field_id;
             }

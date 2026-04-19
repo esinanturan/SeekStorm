@@ -32,14 +32,13 @@ ingest [file_path]
 ```
 
 ```
-ingest [file_path] -t [type] -k [api_key] -i [index_id] -f [flexible] -d [delimiter] -h [header] -q [quoting] -s [skip] -n [num]
+ingest [file_path] -t [type] -k [api_key] -i [index_id] -d [delimiter] -h [header] -q [quoting] -s [skip] -n [num]
 ```
 
 -t [type]:      file type, default=derived from file extension  
 -k [api_key]:   default=Demo API Key  
 -i [index_id]:  default=0  
 -h [header]:    CSV header, treat first line of file as header, default=false  
--f [flexible]:  Allows variable number of fields per record, default=true
 -d [delimiter]: CSV delimiter, default=derived from file type or file extension  
 -q [quoting]:   CSV quoting, default=true  
 -s [skip]:      number of records to skip from start, default=None=0  
@@ -69,7 +68,7 @@ curl --request POST --url http://127.0.0.1:80/api/v1/apikey --header 'apikey: BB
 
 create index: Use individual API key (use create api key above to generate)
 ```
-curl --request POST --url http://127.0.0.1:80/api/v1/index --header 'apikey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' --header 'content-type: application/json' --data '{"schema":[{"field_type": "Text","stored": true,"field": "title","indexed": true,"boost":10.0},{"field_type": "Text","stored": true,"field": "body","indexed": true},{"field_type": "String","stored": true,"field": "url","indexed": false}],"index_name": "test_index","similarity": "Bm25fProximity","tokenizer": "UnicodeAlphanumeric"}'
+curl --request POST --url http://127.0.0.1:80/api/v1/index --header 'apikey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' --header 'content-type: application/json' --data '{"schema":[{"field_type": "Text","store": true,"field": "title","index_lexical": true,"boost":10.0},{"field_type": "Text","store": true,"field": "body","index_lexical": true},{"field_type": "String","store": true,"field": "url","index_lexical": false}],"index_name": "test_index","similarity": "Bm25fProximity","tokenizer": "UnicodeAlphanumeric"}'
 ```
 
 &#x26A0; **CAUTION**: If sending CURL commands from MS Windows Powershell use 'curl.exe' instead of 'curl' AND escape (\") all double quotes within the JSON request object!
@@ -145,7 +144,7 @@ curl --request DELETE --url http://127.0.0.1/api/v1/apikey --header 'apikey: AAA
 
 ### create index
 ```
-curl --request POST --url http://127.0.0.1:80/api/v1/index --header 'apikey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' --header 'content-type: application/json' --data '{"schema":[{"field_type": "Text","stored": true,"field": "title","indexed": true,"boost":10.0},{"field_type": "Text","stored": true,"field": "body","indexed": true},{"field_type": "String","stored": true,"field": "url","indexed": false}],"index_name": "test_index","similarity": "Bm25fProximity","tokenizer": "UnicodeAlphanumeric"}'
+curl --request POST --url http://127.0.0.1:80/api/v1/index --header 'apikey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' --header 'content-type: application/json' --data '{"schema":[{"field_type": "Text","store": true,"field": "title","index_lexical": true,"boost":10.0},{"field_type": "Text","store": true,"field": "body","index_lexical": true},{"field_type": "String","store": true,"field": "url","index_lexical": false}],"index_name": "test_index","similarity": "Bm25fProximity","tokenizer": "UnicodeAlphanumeric"}'
 ```
 ### get index
 ```
@@ -186,27 +185,27 @@ curl --request POST --url http://127.0.0.1:80/api/v1/index/0/doc --header 'apike
  [
    {
      "field": "title",
-     "stored": true,
-     "indexed": true,
+     "store": true,
+     "index_lexical": true,
      "field_type": "Text",
      "boost": 10
    },
    {
      "field": "body",
-     "stored": true,
-     "indexed": true,
+     "store": true,
+     "index_lexical": true,
      "field_type": "Text"
    },
    {
      "field": "url",
-     "stored": true,
-     "indexed": false,
+     "store": true,
+     "index_lexical": false,
      "field_type": "Text"
    },
    {
      "field": "date",
-     "stored": true,
-     "indexed": false,
+     "store": true,
+     "index_lexical": false,
      "field_type": "Timestamp",
      "facet": true
    }

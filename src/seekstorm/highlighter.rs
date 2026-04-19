@@ -186,6 +186,8 @@ pub(crate) fn add_fragment<'a>(
             min_heap::Result {
                 doc_id: section_index,
                 score,
+
+                ..Default::default()
             },
             fragment_number,
         );

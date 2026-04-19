@@ -13,14 +13,26 @@ use csv::{ReaderBuilder, Terminator};
 use num_format::{Locale, ToFormattedString};
 #[cfg(feature = "pdf")]
 use pdfium_render::prelude::{PdfDocumentMetadataTagType, Pdfium};
-use serde_json::{Deserializer, json};
+use serde_json::{Deserializer, Value, json};
+use tabled::{
+    Table,
+    settings::{
+        Color, Modify, Remove, Style, Width,
+        object::{Columns, Rows},
+        style::{BorderColor, HorizontalLine},
+    },
+};
 use tokio::sync::RwLock;
 use walkdir::WalkDir;
 
 use crate::{
     commit::Commit,
-    index::{Document, FileType, Index, IndexArc, IndexDocument},
-    utils::truncate,
+    index::{
+        Document, FileType, INDEX_FORMAT_VERSION_MAJOR, INDEX_FORMAT_VERSION_MINOR, Index,
+        IndexArc, IndexDocument, Info, META_FILENAME,
+    },
+    utils::{dir_size, truncate},
+    vector::{Embedding, embedding_to_json},
 };
 
 use lazy_static::lazy_static;
@@ -546,7 +558,6 @@ impl IngestJson for IndexArc {
                 println!("ingesting data from: {}", data_path.display());
 
                 let start_time = Instant::now();
-                let mut docid: i64 = 0;
 
                 let index_arc_clone2 = self.clone();
                 let index_ref = index_arc_clone2.read().await;
@@ -565,7 +576,6 @@ impl IngestJson for IndexArc {
                     for doc_object in Deserializer::from_reader(reader).into_iter::<Document>() {
                         self.index_document(doc_object.unwrap(), FileType::None)
                             .await;
-                        docid += 1;
                     }
                 } else {
                     println!("JSON detected");
@@ -582,8 +592,6 @@ impl IngestJson for IndexArc {
                             None => break,
                         }
 
-                        docid += 1;
-
                         match read_skipping_ws(reader.by_ref()).unwrap() {
                             b',' => {}
                             b']' => break,
@@ -596,57 +604,366 @@ impl IngestJson for IndexArc {
 
                 let elapsed_time = start_time.elapsed().as_nanos();
 
-                let date: DateTime<Utc> = DateTime::from(SystemTime::now());
+                let _date: DateTime<Utc> = DateTime::from(SystemTime::now());
 
-                let index_ref = self.read().await;
-                println!(
-                    "{}: {} compression {:?}  shards {}  levels {}  ngrams {:08b}  docs {}  docs/sec {}  docs/day {} dictionary {} {} completions {} minutes {:.2} seconds {}",
-                    "Indexing finished".green(),
-                    date.format("%D"),
-                    index_ref.meta.document_compression,
-                    index_ref.shard_count().await,
-                    index_ref.shard_vec[0].read().await.level_index.len(),
-                    index_ref.meta.ngram_indexing,
-                    docid.to_formatted_string(&Locale::en),
-                    (docid as u128 * 1_000_000_000 / elapsed_time).to_formatted_string(&Locale::en),
-                    ((docid as u128 * 1_000_000_000 / elapsed_time) * 3600 * 24)
-                        .to_formatted_string(&Locale::en),
-                    if let Some(symspell) = index_ref.symspell_option.as_ref() {
-                        symspell
-                            .read()
-                            .await
-                            .get_dictionary_size()
+                let time_label: &'static str = "index time";
+                let time_value = (elapsed_time / 1_000_000_000).to_string()
+                    + " s "
+                    + &format!("{:.2} min ", elapsed_time as f64 / 1_000_000_000.0 / 60.0)
+                    + &format!(
+                        "{} doc/s",
+                        (self.read().await.indexed_doc_count().await as u128 * 1_000_000_000
+                            / elapsed_time)
                             .to_formatted_string(&Locale::en)
-                    } else {
-                        "None".to_string()
-                    },
-                    if let Some(symspell) = index_ref.symspell_option.as_ref() {
-                        symspell
-                            .read()
-                            .await
-                            .get_candidates_size()
+                    )
+                    + " "
+                    + &format!(
+                        "{} doc/day",
+                        ((self.read().await.indexed_doc_count().await as u128 * 1_000_000_000
+                            / elapsed_time)
+                            * 3600
+                            * 24)
                             .to_formatted_string(&Locale::en)
-                    } else {
-                        "None".to_string()
-                    },
-                    if let Some(completions) = index_ref.completion_option.as_ref() {
-                        completions
-                            .read()
-                            .await
-                            .len()
-                            .to_formatted_string(&Locale::en)
-                    } else {
-                        "None".to_string()
-                    },
-                    elapsed_time as f64 / 1_000_000_000.0 / 60.0,
-                    elapsed_time / 1_000_000_000
-                );
+                    );
+                display_index_info(self, time_label, time_value).await
             }
             false => {
                 println!("data file not found: {}", data_path.display());
             }
         }
     }
+}
+
+/// Display index information in a table format in the console.
+pub async fn display_index_info(
+    index_arc: &Arc<RwLock<Index>>,
+    time_label: &'static str,
+    time_value: String,
+) {
+    let index_ref = index_arc.read().await;
+    let index_path = index_ref.index_path_string.clone();
+    let level_count = index_ref.level_count().await;
+    let file_date = metadata(Path::new(&index_path).join(META_FILENAME))
+        .unwrap()
+        .created()
+        .unwrap();
+    let dt_now_utc: DateTime<Utc> = file_date.into();
+
+    let s = if let Some(symspell) = index_ref.symspell_option.as_ref() {
+        symspell
+            .read()
+            .await
+            .get_candidates_size()
+            .to_formatted_string(&Locale::en)
+    } else {
+        "None".to_string()
+    };
+    let s2 = if let Some(completions) = index_ref.completion_option.as_ref() {
+        completions
+            .read()
+            .await
+            .len()
+            .to_formatted_string(&Locale::en)
+    } else {
+        "None".to_string()
+    };
+
+    for shard in index_ref.shard_vec.iter() {
+        shard.read().await.index_file.sync_all().unwrap();
+        shard.read().await.vector_file.sync_all().unwrap();
+        shard.read().await.facets_file.sync_all().unwrap();
+        shard.read().await.docstore_file.sync_all().unwrap();
+    }
+    let index_size = dir_size(Path::new(&index_ref.index_path_string)).unwrap_or(0);
+
+    let info_entries = vec![
+        Info {
+            entry: "Index",
+            value: "".to_string(),
+        },
+        Info {
+            entry: "index id, name",
+            value: index_ref.meta.id.to_string() + " " + &index_ref.meta.name,
+        },
+        Info {
+            entry: "index format version",
+            value: index_ref.index_format_version_major.to_string()
+                + "."
+                + &index_ref.index_format_version_minor.to_string()
+                + " "
+                + &INDEX_FORMAT_VERSION_MAJOR.to_string()
+                + "."
+                + &INDEX_FORMAT_VERSION_MINOR.to_string(),
+        },
+        Info {
+            entry: "indexed documents",
+            value: index_ref
+                .indexed_doc_count()
+                .await
+                .to_formatted_string(&Locale::en),
+        },
+        Info {
+            entry: "deleted documents",
+            value: index_ref.deleted_doc_count.to_formatted_string(&Locale::en),
+        },
+        Info {
+            entry: "fields",
+            value: index_ref.schema_map.len().to_string()
+                + " ("
+                + &index_ref.indexed_field_vec.len().to_string()
+                + " indexed, "
+                + &index_ref.stored_field_names.len().to_string()
+                + " stored)",
+        },
+        Info {
+            entry: "shards",
+            value: index_ref.shard_count().await.to_string(),
+        },
+        Info {
+            entry: "levels",
+            value: level_count.to_string(),
+        },
+        Info {
+            entry: "document compression",
+            value: index_ref.meta.document_compression.to_string(),
+        },
+        Info {
+            entry: "index size",
+            value: index_size.to_formatted_string(&Locale::en) + " bytes",
+        },
+        Info {
+            entry: "creation date",
+            value: dt_now_utc.format("%Y-%m-%d %H:%M:%S").to_string(),
+        },
+        Info {
+            entry: time_label,
+            value: time_value,
+        },
+        Info {
+            entry: "Lexical",
+            value: index_ref.is_lexical_indexing.to_string(),
+        },
+        Info {
+            entry: "segments",
+            value: index_ref.segment_number1.to_string(),
+        },
+        Info {
+            entry: "n-grams",
+            value: format!("{:08b}", index_ref.meta.ngram_indexing),
+        },
+        Info {
+            entry: "facets",
+            value: index_ref.facets.len().to_string(),
+        },
+        Info {
+            entry: "tokenizer",
+            value: index_ref.meta.tokenizer.to_string(),
+        },
+        Info {
+            entry: "stemmer",
+            value: index_ref.meta.stemmer.to_string(),
+        },
+        Info {
+            entry: "stop words",
+            value: index_ref.shard_vec[0]
+                .read()
+                .await
+                .stop_words
+                .len()
+                .to_string(),
+        },
+        Info {
+            entry: "frequent words",
+            value: index_ref.shard_vec[0]
+                .read()
+                .await
+                .frequent_words
+                .len()
+                .to_string(),
+        },
+        Info {
+            entry: "synonyms",
+            value: index_ref.synonyms_map.len().to_string(),
+        },
+        Info {
+            entry: "similarity",
+            value: index_ref.meta.lexical_similarity.to_string(),
+        },
+        Info {
+            entry: "Vector",
+            value: index_ref.is_vector_indexing.to_string(),
+        },
+        Info {
+            entry: "indexed vectors",
+            value: index_ref
+                .indexed_vector_count()
+                .await
+                .to_formatted_string(&Locale::en)
+                + " ("
+                + &(index_ref.indexed_vector_count().await / level_count.max(1))
+                    .to_formatted_string(&Locale::en)
+                + " per level)",
+        },
+        Info {
+            entry: "indexed clusters",
+            value: index_ref
+                .indexed_cluster_count()
+                .await
+                .to_formatted_string(&Locale::en)
+                + " ("
+                + &(index_ref.indexed_cluster_count().await / level_count.max(1))
+                    .to_formatted_string(&Locale::en)
+                + " per level)",
+        },
+        Info {
+            entry: "dimensions",
+            value: index_ref.vector_dimensions.to_formatted_string(&Locale::en),
+        },
+        Info {
+            entry: "precision, quantization",
+            value: index_ref.vector_precision.to_string()
+                + ", "
+                + &index_ref.quantization.to_string(),
+        },
+        Info {
+            entry: "inference",
+            value: index_ref.meta.inference.to_string(),
+        },
+        Info {
+            entry: "clustering",
+            value: index_ref.meta.clustering.to_string(),
+        },
+        Info {
+            entry: "similarity",
+            value: index_ref.vector_similarity.to_string(),
+        },
+        Info {
+            entry: "Query rewriting",
+            value: "".to_string(),
+        },
+        Info {
+            entry: "spelling correction",
+            value: if let Some(symspell) = index_ref.symspell_option.as_ref() {
+                symspell
+                    .read()
+                    .await
+                    .get_dictionary_size()
+                    .to_formatted_string(&Locale::en)
+            } else {
+                "None".to_string()
+            },
+        },
+        Info {
+            entry: "auto completion",
+            value: s + " " + &s2,
+        },
+    ];
+
+    let mut table = Table::new(info_entries);
+    table.modify(Columns::first(), Width::increase(26));
+
+    table.modify(Columns::last(), Width::truncate(49).suffix("..."));
+    table.modify(Columns::last(), Width::increase(50));
+
+    table.with(Remove::row(Rows::first()));
+
+    if index_ref.is_lexical_indexing && index_ref.is_vector_indexing {
+        table
+            .with(Style::modern().remove_horizontal().horizontals([
+                (1, HorizontalLine::inherit(Style::modern())),
+                (12, HorizontalLine::inherit(Style::modern())),
+                (13, HorizontalLine::inherit(Style::modern())),
+                (22, HorizontalLine::inherit(Style::modern())),
+                (23, HorizontalLine::inherit(Style::modern())),
+                (30, HorizontalLine::inherit(Style::modern())),
+                (31, HorizontalLine::inherit(Style::modern())),
+            ]))
+            .with(BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+        table.modify(
+            Columns::first(),
+            BorderColor::filled(Color::FG_BRIGHT_BLACK),
+        );
+        table.modify(Columns::last(), BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+        table.with(Modify::new(Rows::one(0)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(12)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(22)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(30)).with(Color::FG_CYAN));
+    } else if index_ref.is_lexical_indexing {
+        table.with(Remove::row(Rows::new(23..30)));
+        table
+            .with(Style::modern().remove_horizontal().horizontals([
+                (1, HorizontalLine::inherit(Style::modern())),
+                (12, HorizontalLine::inherit(Style::modern())),
+                (13, HorizontalLine::inherit(Style::modern())),
+                (22, HorizontalLine::inherit(Style::modern())),
+                (23, HorizontalLine::inherit(Style::modern())),
+                (24, HorizontalLine::inherit(Style::modern())),
+            ]))
+            .with(BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+        table.modify(
+            Columns::first(),
+            BorderColor::filled(Color::FG_BRIGHT_BLACK),
+        );
+        table.modify(Columns::last(), BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+        table.with(Modify::new(Rows::one(0)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(12)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(22)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(23)).with(Color::FG_CYAN));
+    } else if index_ref.is_vector_indexing {
+        table.with(Remove::row(Rows::new(13..22)));
+        table
+            .with(Style::modern().remove_horizontal().horizontals([
+                (1, HorizontalLine::inherit(Style::modern())),
+                (12, HorizontalLine::inherit(Style::modern())),
+                (13, HorizontalLine::inherit(Style::modern())),
+                (14, HorizontalLine::inherit(Style::modern())),
+                (21, HorizontalLine::inherit(Style::modern())),
+                (22, HorizontalLine::inherit(Style::modern())),
+            ]))
+            .with(BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+        table.modify(
+            Columns::first(),
+            BorderColor::filled(Color::FG_BRIGHT_BLACK),
+        );
+        table.modify(Columns::last(), BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+        table.with(Modify::new(Rows::one(0)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(12)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(13)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(21)).with(Color::FG_CYAN));
+    } else {
+        table.with(Remove::row(Rows::new(23..30)));
+        table.with(Remove::row(Rows::new(13..22)));
+
+        table
+            .with(Style::modern().remove_horizontal().horizontals([
+                (1, HorizontalLine::inherit(Style::modern())),
+                (12, HorizontalLine::inherit(Style::modern())),
+                (13, HorizontalLine::inherit(Style::modern())),
+                (14, HorizontalLine::inherit(Style::modern())),
+                (15, HorizontalLine::inherit(Style::modern())),
+                (16, HorizontalLine::inherit(Style::modern())),
+            ]))
+            .with(BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+        table.modify(
+            Columns::first(),
+            BorderColor::filled(Color::FG_BRIGHT_BLACK),
+        );
+        table.modify(Columns::last(), BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+        table.with(Modify::new(Rows::one(0)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(12)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(13)).with(Color::FG_CYAN));
+        table.with(Modify::new(Rows::one(14)).with(Color::FG_CYAN));
+    }
+
+    println!("{}", table);
 }
 
 #[allow(async_fn_in_trait)]
@@ -718,10 +1035,6 @@ impl IngestCsv for IndexArc {
                 let start_time = Instant::now();
                 let mut docid: usize = 0;
 
-                let index_arc_clone2 = self.clone();
-                let index_ref = index_arc_clone2.read().await;
-                drop(index_ref);
-
                 let index_arc_clone = self.clone();
                 let index_arc_clone_clone = index_arc_clone.clone();
 
@@ -769,20 +1082,167 @@ impl IngestCsv for IndexArc {
 
                 let elapsed_time = start_time.elapsed().as_nanos();
 
-                println!(
-                    "{}: docs {}  docs/sec {}  docs/day {} minutes {:.2} seconds {}",
-                    "Indexing finished".green(),
-                    docid.to_formatted_string(&Locale::en),
-                    (docid as u128 * 1_000_000_000 / elapsed_time).to_formatted_string(&Locale::en),
-                    ((docid as u128 * 1_000_000_000 / elapsed_time) * 3600 * 24)
-                        .to_formatted_string(&Locale::en),
-                    elapsed_time as f64 / 1_000_000_000.0 / 60.0,
-                    elapsed_time / 1_000_000_000
-                );
+                let time_label: &'static str = "index time";
+                let time_value = (elapsed_time / 1_000_000_000).to_string()
+                    + " s "
+                    + &format!("{:.2} min ", elapsed_time as f64 / 1_000_000_000.0 / 60.0)
+                    + &format!(
+                        "{} doc/s",
+                        (self.read().await.indexed_doc_count().await as u128 * 1_000_000_000
+                            / elapsed_time)
+                            .to_formatted_string(&Locale::en)
+                    )
+                    + " "
+                    + &format!(
+                        "{} doc/day",
+                        ((self.read().await.indexed_doc_count().await as u128 * 1_000_000_000
+                            / elapsed_time)
+                            * 3600
+                            * 24)
+                            .to_formatted_string(&Locale::en)
+                    );
+                display_index_info(self, time_label, time_value).await
             }
             false => {
                 println!("data file not found: {}", data_path.display());
             }
+        }
+    }
+}
+
+/// Read .ivecs files. These are simple binary formats for storing vectors, commonly used in similarity search benchmarks like SIFT.
+pub fn read_ivecs(path: &str) -> Result<Vec<Vec<i32>>, io::Error> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut ground_truth = Vec::new();
+
+    loop {
+        let mut dim_buf = [0u8; 4];
+        if reader.read_exact(&mut dim_buf).is_err() {
+            break;
+        }
+        let k = i32::from_le_bytes(dim_buf) as usize;
+
+        let mut neighbors = vec![0i32; k];
+        let mut data_buf = vec![0u8; k * 4];
+        reader.read_exact(&mut data_buf)?;
+
+        for (i, neighbour) in neighbors.iter_mut().enumerate().take(k) {
+            let start = i * 4;
+            let bytes = data_buf[start..start + 4].try_into().unwrap();
+            *neighbour = i32::from_le_bytes(bytes);
+        }
+        ground_truth.push(neighbors);
+    }
+    Ok(ground_truth)
+}
+
+/// Read .fvecs files. These are simple binary formats for storing vectors, commonly used in similarity search benchmarks like SIFT.
+pub fn read_fvecs(path: &str) -> Result<Vec<Vec<f32>>, io::Error> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut results = Vec::new();
+
+    loop {
+        let mut dim_buf = [0u8; 4];
+        if reader.read_exact(&mut dim_buf).is_err() {
+            break;
+        }
+        let dim = i32::from_le_bytes(dim_buf) as usize;
+
+        let mut vec_data = vec![0.0f32; dim];
+        let mut float_buf = vec![0u8; dim * 4];
+        reader.read_exact(&mut float_buf)?;
+
+        for (i, v_d) in vec_data.iter_mut().enumerate().take(dim) {
+            let start = i * 4;
+            let bytes = float_buf[start..start + 4].try_into().unwrap();
+            *v_d = f32::from_le_bytes(bytes);
+        }
+        results.push(vec_data);
+    }
+    Ok(results)
+}
+
+use bytemuck::checked::cast_slice_mut;
+
+/// Ingest SIFT data from .fvecs file format.
+/// The document ingestion is streamed without loading the whole document vector into memory to allow for unlimited file size while keeping RAM consumption low.
+pub async fn ingest_sift(
+    index_arc: &Arc<RwLock<Index>>,
+    data_path: &Path,
+    max_count: Option<usize>,
+) {
+    match data_path.exists() {
+        true => {
+            println!("ingesting data from: {}", data_path.display());
+
+            let start_time = Instant::now();
+
+            let fvecs_file = File::open(data_path).unwrap();
+            let mut fvecs_reader = BufReader::new(fvecs_file);
+            let file_length = fvecs_reader.get_ref().metadata().unwrap().len() as usize;
+            let mut byte_number = 0;
+
+            let mut docid = 0;
+            loop {
+                let mut b = [0u8; 4];
+                fvecs_reader.read_exact(&mut b).unwrap();
+                let dimension = i32::from_le_bytes(b) as usize;
+
+                let mut fvecs = vec![0f32; dimension];
+                let span = fvecs.as_mut_slice();
+                let bytes = cast_slice_mut(span);
+                fvecs_reader.read_exact(bytes).unwrap();
+
+                let document = Document::from([
+                    (
+                        "vector".to_string(),
+                        embedding_to_json(Embedding::F32(fvecs)),
+                    ),
+                    ("index".to_string(), Value::String(docid.to_string())),
+                ]);
+
+                index_arc.index_document(document, FileType::None).await;
+
+                docid += 1;
+                if docid >= max_count.unwrap_or(usize::MAX) {
+                    break;
+                }
+
+                byte_number += 4 + (dimension * 4);
+                if byte_number >= file_length {
+                    break;
+                }
+            }
+
+            index_arc.commit().await;
+
+            let elapsed_time = start_time.elapsed().as_nanos();
+
+            let time_label: &'static str = "index time";
+            let time_value = (elapsed_time / 1_000_000_000).to_string()
+                + " s "
+                + &format!("{:.2} min ", elapsed_time as f64 / 1_000_000_000.0 / 60.0)
+                + &format!(
+                    "{} doc/s",
+                    (index_arc.read().await.indexed_doc_count().await as u128 * 1_000_000_000
+                        / elapsed_time)
+                        .to_formatted_string(&Locale::en)
+                )
+                + " "
+                + &format!(
+                    "{} doc/day",
+                    ((index_arc.read().await.indexed_doc_count().await as u128 * 1_000_000_000
+                        / elapsed_time)
+                        * 3600
+                        * 24)
+                        .to_formatted_string(&Locale::en)
+                );
+            display_index_info(index_arc, time_label, time_value).await
+        }
+        false => {
+            println!("data file not found: {}", data_path.display());
         }
     }
 }

@@ -6,9 +6,69 @@ Scalability and performance are the two fundamental design goals.
 
 Index size and latency grow linearly with the number of indexed documents, while the RAM consumption remains constant, ensuring scalability.
 
-## Index
+## Dual Engine Architecture for Hybrid Search
 
-The index is based on an inverted index. The index can either be kept in RAM or memory mapped files. In both cases it is fully persistent on disk.
+* Internally, SeekStorm uses **two separate, first-class, native index architectures** for **vector search** and **keyword search**. Two native cores, not just a retrofit, add-on layer.
+* SeekStorm doesn’t try to make one index do everything. It runs two native search engines and lets the query planner decide how to combine them.
+* Two native index architectures under one roof:
+  - Lexical search: an inverted index optimized for lexical relevance, 
+  - Vector search: an ANN index optimized for vector similarity.
+* Both are first-class engines, integrated at the query planner level.
+  - Query planner with 6 dedicated QueryModes and FusionTypes
+  - Query planner mode can be automatically or manually selected.
+  - Active QueryModes mode is returned for explainability, relatability and credibility.
+* Separate storage layouts, separate indexing pipelines, separate execution paths, unified query planner and result fusion (Reciprocal Rank Fusion - RRF).
+* Two independent scorers, two independent top-k candidates: late fusion with intent, not score soup, no score normalization hell.
+* The user is fully shielded from the complexity as if it was only a single index.
+* Enables pure lexical, pure vector or hybrid search (exhaustive, not only re-ranking of preliminary candidates). 
+
+</br>
+
+
+                            ┌────────────────────┐
+                            │     User / API     │
+                            │   (hybrid query)   │
+                            └─────────┬──────────┘
+                                      │
+                                      ▼
+                            ┌────────────────────┐
+                            │    Query Planner   │
+                            │ (intent + strategy)│
+                            └───────┬───────┬────┘
+                                    │       │
+                     ┌──────────────┘       └──────────────┐
+                     ▼                                     ▼
+            ┌────────────────────┐            ┌────────────────────┐
+            │ Lexical Engine     │            │ Vector Engine      │
+            │ Inverted Index     │            │ Native ANN Index   │
+            │ (BM25 / Boolean)   │            │ (Leveled‑IVF)      │
+            └─────────┬──────────┘            └─────────┬──────────┘
+                      │                                 │
+                      ▼                                 ▼
+              Ranked Results L                    Ranked Results V
+                      │                                 │
+                      └───────┬───────────────┬─────────┘
+                              ▼               ▼
+                        ┌────────────────────────────┐
+                        │       Result Fusion        │
+                        │ (RRF / rerank strategies)  │
+                        │                            │
+                        └────────────┬───────────────┘
+                                     ▼
+                            Final Ranked Results
+
+
+## Leveled IVF index (vector)
+
+- **Disk-based**, **Leveled IVF index** for unlimited index size.
+- **Sharded index** for lock-free utilization of all processor cores.
+- true **real-time** indexing and search capable.
+- **Approximate Nearest Neighbor Search** (ANNS) and exhaustive **k-nearest neighbor** search (kNN)
+- **K-Medoid clustering**: PAM (Partition Around Medoids) with actual data points as centers.
+
+## Inverted Index (lexical)
+
+The index is based on an **inverted index**. The index can either be kept in RAM or memory mapped files. In both cases it is fully persistent on disk.
 The identical index file format for both RAM and memory mapping mode, allows to switch the index access mode for an existing index at any time.
 * Ram: no disc access at search time for minimal latency, even after cold start, at the cost of longer index load time and higher RAM consumption as the whole index is preloaded to RAM.
 * Mmap: disc access via mmap during search time, for minimal RAM consumption, high scalability, and minimal index load time. With Mmap disk access is cached by the OS, being persistent between program starts until reboot.

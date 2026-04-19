@@ -232,7 +232,7 @@ impl Shard {
 
         let keys: Vec<String> = document.keys().cloned().collect();
         for key in keys.into_iter() {
-            if !self.schema_map.contains_key(&key) || !self.schema_map.get(&key).unwrap().stored {
+            if !self.schema_map.contains_key(&key) || !self.schema_map.get(&key).unwrap().store {
                 document.shift_remove(&key);
             }
         }

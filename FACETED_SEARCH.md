@@ -120,21 +120,23 @@ Setting a numerical field to "facet":true is also the precondition for sorting t
 
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use seekstorm::index::{IndexMetaObject, SimilarityType,TokenizerType,StopwordType,FrequentwordType,AccessType,StemmerType,NgramSet,DocumentCompression,create_index};
+use seekstorm::index::{IndexMetaObject, Clustering,LexicalSimilarity,TokenizerType,StopwordType,FrequentwordType,AccessType,StemmerType,NgramSet,DocumentCompression,create_index};
+use seekstorm::vector::Inference;
+use seekstorm::vector_similarity::VectorSimilarity;
 
 let index_path=Path::new("C:/index/");//x
 
 let schema_json = r#"
-[{"field":"title","field_type":"Text","stored":false,"indexed":false},
-{"field":"body","field_type":"Text","stored":true,"indexed":true},
-{"field":"url","field_type":"Text","stored":true,"indexed":false},
-{"field":"town","field_type":"String16","stored":false,"indexed":false,"facet":true}]"#;
+[{"field":"title","field_type":"Text","store":false,"index_lexical":false},
+{"field":"body","field_type":"Text","store":true,"index_lexical":true},
+{"field":"url","field_type":"Text","store":true,"index_lexical":false},
+{"field":"town","field_type":"String16","store":false,"index_lexical":false,"facet":true}]"#;
 let schema=serde_json::from_str(schema_json).unwrap();
 
 let meta = IndexMetaObject {
     id: 0,
     name: "test_index".to_string(),
-    similarity: SimilarityType::Bm25f,
+    lexical_similarity: LexicalSimilarity::Bm25f,
     tokenizer: TokenizerType::AsciiAlphabetic,
     stemmer: StemmerType::None,
     stop_words: StopwordType::None,
@@ -144,6 +146,8 @@ let meta = IndexMetaObject {
     access_type: AccessType::Mmap,
     spelling_correction: None,
     query_completion: None,
+    clustering: Clustering::None,
+    inference: Inference::None,
 };
 
 let synonyms=Vec::new();
@@ -283,7 +287,7 @@ where the ranges can be defined dynamically with different boundaries for each q
 ```rust ,no_run
 # tokio_test::block_on(async {
 
-use seekstorm::search::{Search, QueryType, ResultType, QueryFacet, QueryRewriting};
+use seekstorm::search::{Search, SearchMode, QueryType, ResultType, QueryFacet, QueryRewriting};
 use seekstorm::highlighter::{Highlight, highlighter};
 use seekstorm::index::open_index;
 use std::path::Path;
@@ -293,6 +297,9 @@ let index_path=Path::new("C:/index/");
 let index_arc=open_index(index_path,false).await.unwrap();
 
 let query="test".to_string();
+let query_vector=None;
+let search_mode=SearchMode::Lexical;
+let enable_empty_query=false;
 let offset=0;
 let length=10;
 let query_type=QueryType::Intersection; 
@@ -303,7 +310,7 @@ let query_facets = vec![QueryFacet::String16 {field: "age".into(),prefix: "".int
 let facet_filter=Vec::new();
 let result_sort=Vec::new();
 
-let result_object = index_arc.search(query, query_type, false, offset, length, result_type,include_uncommitted,field_filter,query_facets,facet_filter,result_sort,QueryRewriting::SearchOnly).await;
+let result_object = index_arc.search(query, query_vector, query_type, search_mode, enable_empty_query, offset, length, result_type,include_uncommitted,field_filter,query_facets,facet_filter,result_sort,QueryRewriting::SearchOnly).await;
 
 
 // **display results**

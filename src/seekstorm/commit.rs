@@ -109,6 +109,7 @@ impl Commit for IndexArc {
         let index_ref = self.read().await;
 
         let mut uncommitted_doc_count = 0;
+        let mut uncommitted_vec_count = 0;
         for shard in index_ref.shard_vec.iter() {
             let p = shard.read().await.permits.clone();
             let permit = p.acquire().await.unwrap();
@@ -116,7 +117,16 @@ impl Commit for IndexArc {
             if shard.read().await.uncommitted {
                 let indexed_doc_count = shard.read().await.indexed_doc_count;
                 uncommitted_doc_count += indexed_doc_count - shard.read().await.committed_doc_count;
-                shard.write().await.commit(indexed_doc_count).await;
+                uncommitted_vec_count += shard.read().await.block_vector_buffer.len();
+
+                if shard.read().await.is_vector_indexing {
+                    shard.write().await.commit_vector_shard().await;
+                }
+                shard
+                    .write()
+                    .await
+                    .commit_lexical_shard(indexed_doc_count)
+                    .await;
                 warmup(shard).await;
             }
 
@@ -124,19 +134,21 @@ impl Commit for IndexArc {
         }
 
         if !index_ref.mute {
-            if uncommitted_doc_count == 0 {
+            if uncommitted_doc_count == 0 && uncommitted_vec_count == 0 {
                 println!(
-                    "commit index {} level {} no uncommitted documents, skipping commit",
+                    "commit index {} level {} no uncommitted documents and vectors, skipping commit",
                     index_ref.meta.id,
                     index_ref.level_count().await,
                 );
             } else {
                 println!(
-                    "commit index {} level {} committed documents {} {}",
+                    "commit index {} level {} committed documents {} {} committed vectors {} {}",
                     index_ref.meta.id,
                     index_ref.level_count().await,
                     uncommitted_doc_count,
                     index_ref.indexed_doc_count().await,
+                    uncommitted_vec_count,
+                    index_ref.indexed_vector_count().await
                 );
             }
         }
@@ -145,9 +157,9 @@ impl Commit for IndexArc {
 }
 
 impl Shard {
-    pub(crate) async fn commit(&mut self, indexed_doc_count: usize) {
+    pub(crate) async fn commit_lexical_shard(&mut self, indexed_doc_count: usize) {
         let is_last_level_incomplete = self.is_last_level_incomplete;
-        if self.is_last_level_incomplete {
+        if is_last_level_incomplete {
             self.merge_incomplete_index_level_to_level0();
 
             self.index_file_mmap = unsafe {
@@ -162,7 +174,7 @@ impl Shard {
                 .set_len(self.last_level_index_file_start_pos)
             {
                 println!(
-                    "Unable to index_file.set_len in clear_index {} {} {:?}",
+                    "Unable to index_file.set_len in commit_lexical_shard {} {} {:?}",
                     self.index_path_string, self.indexed_doc_count, e
                 )
             };

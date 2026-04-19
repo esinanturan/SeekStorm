@@ -9,6 +9,8 @@ use std::sync::{
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
+#[cfg(feature = "vb")]
+use crate::vector::ResultSource;
 use crate::{
     add_result::{PostingListObjectSingle, add_result_singleterm_multifield},
     index::{Index, IndexArc, NgramType, Shard},
@@ -35,7 +37,6 @@ pub struct IteratorResult {
 }
 
 /// Document iterator
-///
 /// The document iterator allows to iterate over all document IDs and documents in the entire index, forward or backward.
 /// It enables efficient sequential access to every document, even in very large indexes, without running a search.
 /// Paging through the index works without collecting document IDs to Min-heap in size-limited RAM first.
@@ -48,7 +49,6 @@ pub struct IteratorResult {
 /// When these are mapped to global document IDs, temporary gaps can appear.
 /// As a result, simply iterating from 0 to the total document count may encounter invalid IDs near the end.
 /// The Document Iterator abstracts this complexity and reliably returns only valid document IDs.
-///
 /// - docid=None, take>0: **skip first s document IDs**, then **take next t document IDs** of an index.
 /// - docid=None, take<0: **skip last s document IDs**, then **take previous t document IDs** of an index.
 /// - docid=Some, take>0: **skip next s document IDs**, then **take next t document IDs** of an index, relative to a given document ID, with end-of-index indicator.
@@ -59,13 +59,11 @@ pub struct IteratorResult {
 ///
 /// Next page:     take last  docid from previous result set, skip=1, take=+page_size
 /// Previous page: take first docid from previous result set, skip=1, take=-page_size
-///
 /// Returns a tuple of (number of actually skipped document IDs, vec of taken document IDs, sorted ascending).
 /// Detect end/begin of index during iteration: if returned vec.len() < requested take || if returned skip <requested skip
 #[allow(async_fn_in_trait)]
 pub trait GetIterator {
     /// Document iterator
-    ///
     /// The document iterator allows to iterate over all document IDs and documents in the entire index, forward or backward.
     /// It enables efficient sequential access to every document, even in very large indexes, without running a search.
     /// Paging through the index works without collecting document IDs to Min-heap in size-limited RAM first.
@@ -78,7 +76,6 @@ pub trait GetIterator {
     /// When these are mapped to global document IDs, temporary gaps can appear.
     /// As a result, simply iterating from 0 to the total document count may encounter invalid IDs near the end.
     /// The Document Iterator abstracts this complexity and reliably returns only valid document IDs.
-    ///
     /// - docid=None, take>0: **skip first s document IDs**, then **take next t document IDs** of an index.
     /// - docid=None, take<0: **skip last s document IDs**, then **take previous t document IDs** of an index.
     /// - docid=Some, take>0: **skip next s document IDs**, then **take next t document IDs** of an index, relative to a given document ID, with end-of-index indicator.
@@ -89,7 +86,6 @@ pub trait GetIterator {
     ///
     /// Next page:     take last  docid from previous result set, skip=1, take=+page_size
     /// Previous page: take first docid from previous result set, skip=1, take=-page_size
-    ///
     /// Returns a tuple of (number of actually skipped document IDs, vec of taken document IDs, sorted ascending).
     /// Detect end/begin of index during iteration: if returned vec.len() < requested take || if returned skip <requested skip
     async fn get_iterator(
@@ -375,6 +371,8 @@ pub(crate) async fn search_iterator_index(
         query_terms: Vec::new(),
         result_count: 0,
         result_count_total: 0,
+        observed_vector_count: 0,
+        observed_cluster_count: 0,
         results: Vec::new(),
         facets: AHashMap::new(),
         suggestions: Vec::new(),
@@ -400,6 +398,10 @@ pub(crate) async fn search_iterator_index(
             result_object.results.push(Result {
                 doc_id: result.doc_id as usize,
                 score: 0.0,
+
+                #[cfg(feature = "vb")]
+                source: ResultSource::Lexical,
+                ..Default::default()
             });
         }
 

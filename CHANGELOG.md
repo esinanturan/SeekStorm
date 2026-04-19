@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-02-27
+
+### Added
+
+- Introducing native vector search: SeekStorm now uses [**two separate, first-class, native index architectures**](ARCHITECTURE.md#architecture) for **vector search** and **keyword search**.
+    * **Multi-Vector indexing**: both from multiple fields and from multiple chunks per field.
+    * Generate and index embeddings from any text document field.
+    * All **field filters** are directly active **during vector search**, not just as post-search filtering step.
+    * **Per query choice** of lexical search, **vector search**, or **hybrid search**.
+    * Configurable **chunker** that respects **sentence boundaries** and **Unicode segmentation** for multilingual text.
+    * Sharded and leveled IVF index
+  * New `SchemaField.index_vector` property: field will be transformed to chunks, embeddings, quantized, and indexed to the vector index.
+    * internal vectors: if `FieldType::Text` 					                                                                        -> internal chunking, embedding, quantizing - derived from text field using the specified model.
+		* external vectors: if `FieldType::Binary` (array of floats serialized to bytes and then base64 encoded to Json string)   -> external chunking, embedding, quantizing
+    * external vectors: if `FieldType::Json`   (array of floats as Json array)                                                -> external chunking, embedding, quantizing
+    * multiple fields can carry different vectors (named vector)  -> ranks of all fields are aggregated/fused per document
+  * New optional `query_vector`: 
+    * If `None`, then the query vector is derived from `query_string` using the specified model. 
+    * If `Some`, then the `query_vector` is used for vector search and `query_string` is only used for lexical search and highlighting.
+  * New index methods for vector search
+    * index.indexed_vector_count()
+    * index.indexed_cluster_count()
+  * New `ResultObject` properties for vector search
+    * ResultObject.observed_vector_count 
+    * ResultObject.observed_cluster_count
+  * New `search` parameter `search_mode: SearchMode`
+    * SearchMode::Lexical
+    * SearchMode::Vector{ similarity_threshold: Option<f32>, ann_mode: AnnMode } 
+    * SearchMode::Hybrid{ similarity_threshold: Option<f32>, ann_mode: AnnMode } 
+  * New `AnnMode`
+    * All
+    * Nprobe(usize)
+    * Similaritythreshold(f32)
+    * NprobeSimilaritythreshold(usize, f32)
+  * New (optional) `Result` properties for vector and hybrid search (features = ["vb"])
+    - field_id: u32,
+    - chunk_id: u32,
+    - level_id: u32,
+    - shard_id: u32,
+    - cluster_id: u32,
+    - cluster_score: f32,
+    - vector_score: f32,
+    - lexical_score: f32,
+    - source: ResultSource,
+  * New vector search `IndexMetaObject.clustering:Clustering` property
+    * None
+    * Auto
+    * Fixed(usize)
+  * New vector search `IndexMetaObject.inference:Inference` property
+    * Inference 
+      * Model2Vec (from [model2vec-rs](https://github.com/MinishLab/model2vec-rs))
+        * PotionBase32M
+        * PotionMultilingual128M
+        * PotionRetrieval32M
+        * PotionBase8M	
+        * PotionBase4M	
+        * PotionBase2M
+      * Model2VecCustom
+      * External (model and vectors)
+        * Dimensions
+        * Precision
+          * F32
+          * I8
+        * Quantization 
+          * Scalar Quantization from F32 to I8
+          * None
+        * Similarity
+          * Cosine
+          * Dot 
+          * Euclidean 
+          
+- A new index info card is displayed after open index and ingest.
+- Rate limiter for REST API implemented.
+
+### Changed
+
+SchemaField.indexed ->  SchemaField.index_lexical
+SchemaField.stored  ->  SchemaField.store
+similarity: SimilarityType ->  lexical_similarity: LexicalSimilarity
+
 ## [2.3.2] - 2026-03-09
 
 ### Changed
@@ -38,7 +118,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Ukrainian
   - Yiddish
 
-## [2.3.0] - 2026-02-09
+## [2.3.1] - 2026-03-09
+
+### Added
+
+- Stemmers updated to Snowball 3.0.0
+- Added stemmer language support for
+  - Armenian
+  - Basque
+  - Catalan
+  - Czech
+  - DutchPorter
+  - Esperanto
+  - Estonian
+  - Hindi
+  - Indonesian
+  - Irish
+  - Lithuanian
+  - Lovins
+  - Nepali
+  - Persian
+  - Polish
+  - Porter
+  - Serbian
+  - Sesotho
+  - Ukrainian
+  - Yiddish
+
+## [2.3.0] - 2026-02-08
 
 ### Added
 

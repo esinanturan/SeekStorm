@@ -1,25 +1,48 @@
 use base64::{Engine, engine::general_purpose};
 use colored::Colorize;
 use crossbeam_channel::{Receiver, bounded, select};
+
+use indexmap::IndexMap;
+
+use num_format::{Locale, ToFormattedString};
+
 use seekstorm::{
     index::{
-        Close, DocumentCompression, FrequentwordType, NgramSet, QueryCompletion, SimilarityType,
-        SpellingCorrection, StemmerType, StopwordType, TokenizerType,
+        Close, Clustering, DocumentCompression, FrequentwordType, IS_AVX2, Info, LexicalSimilarity,
+        NgramSet, StemmerType, StopwordType, TokenizerType,
     },
-    ingest::{IngestCsv, IngestJson, IngestPdf},
+    ingest::{
+        IngestCsv, IngestJson, IngestPdf, display_index_info, ingest_sift, read_fvecs, read_ivecs,
+    },
+    search::{QueryRewriting, QueryType, ResultType, Search, SearchMode},
+    utils::dir_size,
+    vector::{Embedding, Inference, Model, Quantization},
+    vector_similarity::{AnnMode, VectorSimilarity},
 };
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env::current_exe,
     ffi::OsStr,
     fs::{self, metadata},
     io::{self, IsTerminal},
     path::Path,
     sync::Arc,
+    time::Instant,
+};
+use tabled::{
+    Table,
+    settings::{
+        Color, Modify, Remove, Style, Width,
+        object::{Columns, Rows},
+        style::{BorderColor, HorizontalLine},
+    },
 };
 use tokio::sync::RwLock;
 
 use crate::{
+    MASTER_KEY_SECRET, VERSION,
     api_endpoints::{
         create_apikey_api, create_index_api, delete_apikey_api, generate_openapi, open_all_apikeys,
     },
@@ -69,7 +92,6 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
         absolute_path.push(ingest_path_str);
         ingest_path = &absolute_path;
     }
-    println!("Ingest path: {}", ingest_path.display());
 
     let mut index_path_str = "seekstorm_index";
     if params.contains_key("index_path") {
@@ -101,9 +123,247 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
     let apikey_list = Arc::new(RwLock::new(apikey_list_map));
     let apikey_list_clone = apikey_list.clone();
 
+    let mut local_ip = "0.0.0.0".to_string();
+    let mut local_port = 80;
+    if params.contains_key("local_ip") {
+        local_ip = params.get("local_ip").unwrap().to_string();
+    }
+    if params.contains_key("local_port") {
+        local_port = params.get("local_port").unwrap().parse::<u16>().unwrap();
+    }
+
     let index_path = Path::new(&index_path).to_path_buf();
+
+    let mut hasher = Sha256::new();
+    hasher.update(MASTER_KEY_SECRET.to_string());
+    let master_apikey = hasher.finalize();
+    let master_apikey_base64 = general_purpose::STANDARD.encode(master_apikey);
+
+    let info_entries = vec![
+        Info {
+            entry: "SeekStorm server",
+            value: VERSION.to_string(),
+        },
+        Info {
+            entry: "ingest path",
+            value: ingest_path.display().to_string(),
+        },
+        Info {
+            entry: "index path",
+            value: index_path.display().to_string(),
+        },
+        Info {
+            entry: "AVX2 enabled",
+            value: IS_AVX2.to_string(),
+        },
+        Info {
+            entry: "web server (UI, REST API) ",
+            value: format!("{}:{}", local_ip, local_port),
+        },
+        Info {
+            entry: "master key ⚠️",
+            value: master_apikey_base64.clone(),
+        },
+        Info {
+            entry: "Help",
+            value: "Enter 'help' for console commands".to_string(),
+        },
+        Info {
+            entry: "Shutdown server",
+            value: "Enter 'quit' or press CTRL-C".to_string(),
+        },
+    ];
+
+    let mut table = Table::new(info_entries);
+
+    table
+        .with(
+            Style::modern()
+                .remove_horizontal()
+                .horizontals([(1, HorizontalLine::inherit(Style::modern()))]),
+        )
+        .with(BorderColor::filled(Color::FG_BRIGHT_BLACK));
+    table.modify(
+        Columns::first(),
+        BorderColor::filled(Color::FG_BRIGHT_BLACK),
+    );
+    table.modify(Columns::last(), BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+    table.modify(Columns::first(), Width::increase(25));
+    table.modify(Columns::last(), Width::truncate(49).suffix("..."));
+    table.modify(Columns::last(), Width::increase(50));
+
+    table.with(Remove::row(Rows::first()));
+    table.with(Modify::new(Rows::one(0)).with(Color::FG_BRIGHT_GREEN));
+    table.with(Modify::new(Rows::one(5)).with(Color::FG_BRIGHT_RED));
+    table.with(Modify::new(Rows::one(6)).with(Color::FG_YELLOW));
+    table.with(Modify::new(Rows::one(7)).with(Color::FG_YELLOW));
+
+    println!("{}", table);
+
     let mut apikey_list_mut = apikey_list.write().await;
+
+    let start_time = Instant::now();
     open_all_apikeys(&index_path, &mut apikey_list_mut).await;
+    let elapsed_time = start_time.elapsed().as_nanos();
+
+    let tenants_count = apikey_list_mut.len();
+    let mut index_count = 0;
+    for key in apikey_list_mut.iter() {
+        index_count += key.1.index_list.len();
+    }
+
+    let index_size = dir_size(Path::new(&index_path)).unwrap_or(0);
+
+    let info_entries = vec![
+        Info {
+            entry: "Multitenancy",
+            value: "".to_string(),
+        },
+        Info {
+            entry: "Number of tenants",
+            value: tenants_count.to_string(),
+        },
+        Info {
+            entry: "Number of indices",
+            value: index_count.to_string(),
+        },
+        Info {
+            entry: "Overall disk usage",
+            value: index_size.to_formatted_string(&Locale::en) + " bytes",
+        },
+    ];
+
+    let mut table = Table::new(info_entries);
+
+    table
+        .with(
+            Style::modern()
+                .remove_horizontal()
+                .horizontals([(1, HorizontalLine::inherit(Style::modern()))]),
+        )
+        .with(BorderColor::filled(Color::FG_BRIGHT_BLACK));
+    table.modify(
+        Columns::first(),
+        BorderColor::filled(Color::FG_BRIGHT_BLACK),
+    );
+    table.modify(Columns::last(), BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+    table.modify(Columns::first(), Width::increase(26));
+    table.modify(Columns::last(), Width::truncate(49).suffix("..."));
+    table.modify(Columns::last(), Width::increase(50));
+
+    table.with(Remove::row(Rows::first()));
+    table.with(Modify::new(Rows::one(0)).with(Color::FG_CYAN));
+
+    println!("{}", table);
+
+    let time_label: &'static str = "load time";
+    let time_value = (elapsed_time / 1_000_000_000).to_string() + " s";
+    for apikey in apikey_list_mut.iter() {
+        let index_size =
+            dir_size(Path::new(&index_path).join(apikey.1.id.to_string())).unwrap_or(0) as usize;
+
+        let mut indexed_doc_count_sum = 0;
+        for index in apikey.1.index_list.iter() {
+            indexed_doc_count_sum += index.1.read().await.indexed_doc_count().await;
+        }
+
+        let info_entries = vec![
+            Info {
+                entry: "Tenant",
+                value: "".to_string(),
+            },
+            Info {
+                entry: "tenant id",
+                value: apikey.1.id.to_string(),
+            },
+            Info {
+                entry: "indices quota",
+                value: format!(
+                    "{: >2}",
+                    apikey.1.index_list.len() * 100 / apikey.1.quota.indices_max
+                ) + "% | "
+                    + &apikey.1.index_list.len().to_string()
+                    + " of "
+                    + &apikey.1.quota.indices_max.to_string(),
+            },
+            Info {
+                entry: "documents quota",
+                value: format!(
+                    "{: >2}",
+                    indexed_doc_count_sum * 100 / apikey.1.quota.documents_max
+                ) + "% | "
+                    + &indexed_doc_count_sum.to_formatted_string(&Locale::en)
+                    + " of "
+                    + &apikey
+                        .1
+                        .quota
+                        .documents_max
+                        .to_formatted_string(&Locale::en),
+            },
+            Info {
+                entry: "operations quota",
+                value: format!(
+                    "{: >2}",
+                    indexed_doc_count_sum * 100 / apikey.1.quota.operations_max
+                ) + "% | "
+                    + &indexed_doc_count_sum.to_formatted_string(&Locale::en)
+                    + " of "
+                    + &apikey
+                        .1
+                        .quota
+                        .operations_max
+                        .to_formatted_string(&Locale::en),
+            },
+            Info {
+                entry: "disk usage quota",
+                value: format!("{: >2}", index_size * 100 / apikey.1.quota.indices_size_max)
+                    + "% | "
+                    + &index_size.to_formatted_string(&Locale::en)
+                    + " of "
+                    + &apikey
+                        .1
+                        .quota
+                        .indices_size_max
+                        .to_formatted_string(&Locale::en)
+                    + " bytes",
+            },
+            Info {
+                entry: "rate limit",
+                value: format!("{:?}", apikey.1.quota.rate_limit),
+            },
+        ];
+
+        let mut table = Table::new(info_entries);
+
+        table
+            .with(
+                Style::modern()
+                    .remove_horizontal()
+                    .horizontals([(1, HorizontalLine::inherit(Style::modern()))]),
+            )
+            .with(BorderColor::filled(Color::FG_BRIGHT_BLACK));
+        table.modify(
+            Columns::first(),
+            BorderColor::filled(Color::FG_BRIGHT_BLACK),
+        );
+        table.modify(Columns::last(), BorderColor::filled(Color::FG_BRIGHT_BLACK));
+
+        table.modify(Columns::first(), Width::increase(26));
+        table.modify(Columns::last(), Width::truncate(49).suffix("..."));
+        table.modify(Columns::last(), Width::increase(50));
+
+        table.with(Remove::row(Rows::first()));
+        table.with(Modify::new(Rows::one(0)).with(Color::FG_CYAN));
+
+        println!("{}", table);
+
+        for index in apikey.1.index_list.iter() {
+            display_index_info(index.1, time_label, time_value.clone()).await;
+        }
+    }
+
     drop(apikey_list_mut);
 
     let stdin = io::stdin();
@@ -116,15 +376,6 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
         println!(
             "Standard input is not a terminal. Console commands are disabled. Use docker parameter '-ti terminal/tti' to enable."
         );
-    }
-
-    let mut local_ip = "0.0.0.0".to_string();
-    let mut local_port = 80;
-    if params.contains_key("local_ip") {
-        local_ip = params.get("local_ip").unwrap().to_string();
-    }
-    if params.contains_key("local_port") {
-        local_port = params.get("local_port").unwrap().parse::<u16>().unwrap();
     }
 
     let index_path_local = index_path.clone();
@@ -156,6 +407,7 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                     return;
                 }
 
+
                 recv(receiver_commandline) -> message => {
 
                     if let Ok(m) = message {
@@ -169,6 +421,350 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
 
                     match command
                     {
+
+
+
+                        "searchsift" =>
+                        {
+                            println!("search sift start");
+                            let mut apikey_list_mut = apikey_list_clone.write().await;
+                            let apikey_hash = calculate_hash(&demo_api_key) as u128;
+                            if let Some(apikey_object) = apikey_list_mut.get_mut(&apikey_hash) {
+                                let index_id=0;
+                                if let Some(index_arc) = apikey_object.index_list.get_mut(&index_id) {
+
+                                    let query="";
+
+                                    let len=10;
+                                    let similarity_threshold=None;
+                                    let field_filter=Vec::new();
+                                    let fields_hashset=HashSet::new();
+                                    let search_mode=SearchMode::Vector { similarity_threshold , ann_mode:AnnMode::Nprobe(16)};
+
+                                    let mut search_time_sum=0;
+                                    let mut results_sum=0;
+                                    let mut result_count_total_sum=0;
+                                    let mut observed_cluster_count_sum=0;
+                                    let mut observed_vector_count_sum=0;
+                                    let mut recall_count_sum=0;
+
+
+                                    if let Ok(ground_truth) = read_ivecs(r"C:\linux_remote\testset\sift_groundtruth.ivecs") {
+
+                                    if let Ok(queries) = read_fvecs(r"C:\linux_remote\testset\sift_query.fvecs") {
+
+
+
+
+                                        if true {
+
+                                        let queries_len=queries.len();
+
+                                        for (query_idx, query_embedding) in queries.into_iter().enumerate().take(queries_len) {
+
+                                            let ground_truth_for_query:IndexMap<usize, usize> = ground_truth[query_idx].iter().take(len).enumerate().map(|(i, x)| (*x as usize, i)).collect();
+
+
+                                            let query_embedding=Embedding::F32(query_embedding);
+
+                                            let start_time = Instant::now();
+
+                                            let result_object_vector = index_arc
+                                            .search(
+                                                query.to_string(),
+                                                Some(query_embedding),
+                                                QueryType::Intersection,
+                                                search_mode.clone(),
+                                                false,
+                                                0,
+                                                len,
+                                                ResultType::Topk,
+                                                false,
+                                                field_filter.clone(),
+                                                Vec::new(),
+                                                Vec::new(),
+                                                Vec::new(),
+                                                QueryRewriting::SearchOnly,
+                                            )
+                                            .await;
+
+                                            let search_time = start_time.elapsed().as_nanos() as i64;
+                                            search_time_sum+=search_time;
+                                            results_sum+=result_object_vector.results.len();
+                                            result_count_total_sum+=result_object_vector.result_count_total;
+                                            observed_cluster_count_sum+=result_object_vector.observed_cluster_count;
+                                            observed_vector_count_sum+=result_object_vector.observed_vector_count;
+
+                                            let mut recall_count=0;
+                                            for result in result_object_vector.results.iter() {
+                                                let doc = index_arc.read().await.get_document(result.doc_id, false,&None, &fields_hashset, &Vec::new()).await.ok();
+                                                let index_value= if let Some(doc) = &doc {
+                                                        if let Some(index_field) = doc.get("index") { index_field } else { &Value::String("".to_string()) }
+                                                    }
+                                                    else { &Value::String("".to_string()) };
+                                                let index_string=serde_json::from_value::<String>(index_value.clone()).unwrap_or(index_value.to_string());
+                                                let idx=index_string.parse::<usize>().unwrap_or(0);
+                                                let flag=ground_truth_for_query.contains_key(&idx);
+                                                if flag { recall_count+=1; }
+                                            }
+
+
+
+                                            recall_count_sum+=recall_count;
+
+                                        }
+
+                                        let indexed_vector_count=index_arc.read().await.indexed_vector_count().await;
+                                        let indexed_cluster_count=index_arc.read().await.indexed_cluster_count().await;
+
+                                        println!("QueryMode: {:?} Search time: {} µs  result count {} result count total: {} clusters observed: {:.2}% ({} of {}) vectors observed: {:.2}% ({} of {}) recall: {:.2}%",
+                                        search_mode,
+                                         (search_time_sum as usize/1000/queries_len).to_formatted_string(&Locale::en), results_sum.to_formatted_string(&Locale::en), result_count_total_sum.to_formatted_string(&Locale::en),
+                                        (observed_cluster_count_sum as f64) / queries_len as f64 / (indexed_cluster_count as f64) * 100.0,(observed_cluster_count_sum/queries_len).to_formatted_string(&Locale::en) , indexed_cluster_count.to_formatted_string(&Locale::en),
+                                        (observed_vector_count_sum as f64) / queries_len as f64 / (indexed_vector_count as f64) * 100.0,(observed_vector_count_sum/queries_len).to_formatted_string(&Locale::en) , indexed_vector_count.to_formatted_string(&Locale::en),
+                                        (recall_count_sum as f64) / queries_len as f64 / (len as f64) * 100.0);
+                                        println!();
+
+                                        }
+
+                                    } else {
+                                        println!("Failed to read query query file");
+                                    }
+
+                                    } else {
+                                        println!("Failed to read query ground_truth file");
+                                    }
+                                }
+                            }
+                        }
+
+                        "search" =>
+                        {
+                            println!("search start");
+                            let mut apikey_list_mut = apikey_list_clone.write().await;
+                            let apikey_hash = calculate_hash(&demo_api_key) as u128;
+                            if let Some(apikey_object) = apikey_list_mut.get_mut(&apikey_hash) {
+                                let index_id=0;
+                                if let Some(index_arc) = apikey_object.index_list.get_mut(&index_id) {
+
+
+                                    let query="rosy panther";
+                                    let len=10;
+                                    let similarity_threshold=Some(0.7);
+                                    let field_filter=Vec::new();
+                                    let fields_hashset=HashSet::new();
+                                    let mut recall_set=HashSet::new();
+
+
+                                    let start_time = Instant::now();
+
+                                    let result_object_vector = index_arc
+                                    .search(
+                                        query.to_string(),
+                                        None,
+                                        QueryType::Intersection,
+                                        SearchMode::Vector { similarity_threshold , ann_mode: AnnMode::Similaritythreshold(0.0) },
+                                        false,
+                                        0,
+                                        len,
+                                        ResultType::Topk,
+                                        false,
+                                        field_filter.clone(),
+                                        Vec::new(),
+                                        Vec::new(),
+                                        Vec::new(),
+                                        QueryRewriting::SearchOnly,
+                                    )
+                                    .await;
+
+                                    let search_time = start_time.elapsed().as_nanos() as i64;
+
+                                    let mut min_cluster_score = f32::MAX;
+                                    for (i, result) in result_object_vector.results.iter().enumerate() {
+                                        let doc = index_arc.read().await.get_document(result.doc_id, false,&None, &fields_hashset, &Vec::new()).await.ok();
+                                        let title= if let Some(doc) = &doc { if let Some(title) = doc.get("title") { title.to_string() } else { "".to_string() } } else {"".to_string()};
+                                        #[cfg(feature = "vb")]
+                                        if result.cluster_score < min_cluster_score {
+                                            min_cluster_score = result.cluster_score;
+                                        }
+                                        #[cfg(not(feature = "vb"))]
+                                        {
+                                        min_cluster_score=0.0;
+                                        }
+
+                                        recall_set.insert(result.doc_id);
+
+                                        #[cfg(feature = "vb")]
+                                        println!("Top {}: doc_id: {}, similarity: {}, lexical_score: {}, vector_score: {},  cluster_score: {}, shard_id: {}, level_id: {}, cluster_id: {}, field_id: {}, chunk_id: {}, source: {:?}, document: {} ", i+1, result.doc_id, result.score, result.lexical_score, result.vector_score, result.cluster_score, result.shard_id, result.level_id, result.cluster_id, result.field_id,result.chunk_id, result.source, title);
+                                        #[cfg(not(feature = "vb"))]
+                                        println!("Top {}: doc_id: {}, similarity: {},  document: {} ", i+1, result.doc_id, result.score, title);
+                                    }
+
+                                    let indexed_vector_count=index_arc.read().await.indexed_vector_count().await;
+                                    let indexed_cluster_count=index_arc.read().await.indexed_cluster_count().await;
+
+                                    println!("Search time: {} µs  result count {} result count total: {} clusters observed: {:.2}% ({} of {}) vectors observed: {:.2}% ({} of {})", (search_time/1000).to_formatted_string(&Locale::en), result_object_vector.results.len(), result_object_vector.result_count_total,
+                                    (result_object_vector.observed_cluster_count as f64) / (indexed_cluster_count as f64) * 100.0,result_object_vector.observed_cluster_count.to_formatted_string(&Locale::en) , indexed_cluster_count.to_formatted_string(&Locale::en),
+                                    (result_object_vector.observed_vector_count as f64) / (indexed_vector_count as f64) * 100.0,result_object_vector.observed_vector_count.to_formatted_string(&Locale::en) , indexed_vector_count.to_formatted_string(&Locale::en));
+                                    println!("Minimum cluster score in results: {}", min_cluster_score);
+                                    println!();
+
+
+                                    let start_time = Instant::now();
+
+                                    let result_object_vector = index_arc
+                                    .search(
+                                        query.to_string(),
+                                        None,
+                                        QueryType::Intersection,
+                                        SearchMode::Vector { similarity_threshold , ann_mode: AnnMode::Similaritythreshold(min_cluster_score)},
+                                        false,
+                                        0,
+                                        len,
+                                        ResultType::Topk,
+                                        false,
+                                        field_filter.clone(),
+                                        Vec::new(),
+                                        Vec::new(),
+                                        Vec::new(),
+                                        QueryRewriting::SearchOnly,
+                                    )
+                                    .await;
+
+                                    let mut recall_count=0;
+                                    let search_time = start_time.elapsed().as_nanos() as i64;
+                                    for (i, result) in result_object_vector.results.iter().enumerate() {
+                                        let doc = index_arc.read().await.get_document(result.doc_id, false,&None, &fields_hashset, &Vec::new()).await.ok();
+                                        let title= if let Some(doc) = &doc { if let Some(title) = doc.get("title") { title.to_string() } else { "".to_string() } } else {"".to_string()};
+                                        #[cfg(feature = "vb")]
+                                        println!("Top {}: doc_id: {}, similarity: {}, lexical_score: {}, vector_score: {},  cluster_score: {}, shard_id: {}, level_id: {}, cluster_id: {}, field_id: {}, chunk_id: {}, source: {:?}, document: {} ", i+1, result.doc_id, result.score, result.lexical_score, result.vector_score, result.cluster_score, result.shard_id, result.level_id, result.cluster_id, result.field_id,result.chunk_id, result.source, title);
+                                        #[cfg(not(feature = "vb"))]
+                                        println!("Top {}: doc_id: {}, similarity: {},  document: {} ", i+1, result.doc_id, result.score, title);
+                                        if recall_set.contains(&result.doc_id) { recall_count+=1; }
+                                    }
+                                    println!("Search time: {} µs  result count {} result count total: {} clusters observed: {:.2}% ({} of {}) vectors observed: {:.2}% ({} of {}) recall: {}%", (search_time/1000).to_formatted_string(&Locale::en), result_object_vector.results.len(), result_object_vector.result_count_total,
+                                    (result_object_vector.observed_cluster_count as f64) / (index_arc.read().await.indexed_cluster_count as f64) * 100.0,result_object_vector.observed_cluster_count.to_formatted_string(&Locale::en) , index_arc.read().await.indexed_cluster_count.to_formatted_string(&Locale::en),
+                                    (result_object_vector.observed_vector_count as f64) / (index_arc.read().await.indexed_vector_count as f64) * 100.0,result_object_vector.observed_vector_count.to_formatted_string(&Locale::en) , index_arc.read().await.indexed_vector_count.to_formatted_string(&Locale::en),
+                                    (recall_count as f64) / (recall_set.len() as f64) * 100.0);
+                                    println!();
+
+
+
+                                    let start_time = Instant::now();
+                                    let result_object_vector = index_arc
+                                    .search(
+                                        query.to_string(),
+                                        None,
+                                        QueryType::Intersection,
+                                        SearchMode::Vector { similarity_threshold  , ann_mode: AnnMode::Nprobe(55) },
+                                        false,
+                                        0,
+                                        len,
+                                        ResultType::Topk,
+                                        false,
+                                        field_filter.clone(),
+                                        Vec::new(),
+                                        Vec::new(),
+                                        Vec::new(),
+                                        QueryRewriting::SearchOnly,
+                                    )
+                                    .await;
+
+                                    let mut recall_count=0;
+                                    let search_time = start_time.elapsed().as_nanos() as i64;
+                                    for (i, result) in result_object_vector.results.iter().enumerate() {
+                                        let doc = index_arc.read().await.get_document(result.doc_id, false,&None, &fields_hashset, &Vec::new()).await.ok();
+                                        let title= if let Some(doc) = &doc { if let Some(title) = doc.get("title") { title.to_string() } else { "".to_string() } } else {"".to_string()};
+
+                                        #[cfg(feature = "vb")]
+                                        println!("Top {}: doc_id: {}, similarity: {}, lexical_score: {}, vector_score: {},  cluster_score: {}, shard_id: {}, level_id: {}, cluster_id: {}, field_id: {}, chunk_id: {}, source: {:?}, document: {} ", i+1, result.doc_id, result.score, result.lexical_score, result.vector_score, result.cluster_score, result.shard_id, result.level_id, result.cluster_id, result.field_id,result.chunk_id, result.source, title);
+                                        #[cfg(not(feature = "vb"))]
+                                        println!("Top {}: doc_id: {}, similarity: {},  document: {} ", i+1, result.doc_id, result.score, title);
+
+                                        if recall_set.contains(&result.doc_id) { recall_count+=1; }
+                                    }
+                                    println!("Search time: {} µs  result count {} result count total: {} clusters observed: {:.2}% ({} of {}) vectors observed: {:.2}% ({} of {}) recall: {}%", (search_time/1000).to_formatted_string(&Locale::en), result_object_vector.results.len(), result_object_vector.result_count_total,
+                                    (result_object_vector.observed_cluster_count as f64) / (index_arc.read().await.indexed_cluster_count as f64) * 100.0,result_object_vector.observed_cluster_count.to_formatted_string(&Locale::en) , index_arc.read().await.indexed_cluster_count.to_formatted_string(&Locale::en),
+                                    (result_object_vector.observed_vector_count as f64) / (index_arc.read().await.indexed_vector_count as f64) * 100.0,result_object_vector.observed_vector_count.to_formatted_string(&Locale::en) , index_arc.read().await.indexed_vector_count.to_formatted_string(&Locale::en),
+                                    (recall_count as f64) / (recall_set.len() as f64) * 100.0);
+
+
+                                }
+                            }
+                        }
+
+                        "ingestcsv" =>
+                        {
+                            println!("ingest csv start");
+                            let mut apikey_list_mut = apikey_list_clone.write().await;
+                            let apikey_hash = calculate_hash(&demo_api_key) as u128;
+                            if let Some(apikey_object) = apikey_list_mut.get_mut(&apikey_hash) {
+                                let index_id=0;
+                                if let Some(index_arc) = apikey_object.index_list.get_mut(&index_id) {
+                                    let mut index_arc_clone=index_arc.clone();
+                                    index_arc_clone.ingest_csv(Path::new("C:/data/wikipedia/amzscout.csv"), true, true,true, b',', None, None).await;
+                                }
+                            }
+                        }
+
+                        "ingestsift" =>
+                        {
+                            use seekstorm::vector::Precision;
+                            println!("ingest sift start");
+                            let mut apikey_list_mut = apikey_list_clone.write().await;
+
+                            let apikey_quota_object=ApikeyQuotaObject {
+                                indices_max: 10,
+                                indices_size_max: 100_000_000_000,
+                                documents_max: 100_000_000,
+                                operations_max: 1_000_000_000,
+                                rate_limit:None,
+                                 ..Default::default()
+                            };
+                            create_apikey_api(
+                                &index_path,
+                                apikey_quota_object,
+                                &demo_api_key,
+                                &mut apikey_list_mut,
+                            );
+
+                            let apikey_hash = calculate_hash(&demo_api_key) as u128;
+                            if let Some(apikey_object) = apikey_list_mut.get_mut(&apikey_hash) {
+                                let indexname_schemajson =
+                                    {("sift1m",r#"
+                                [{"field":"vector","field_type":"Json","store":false,"index_lexical":false,"index_vector":true},
+                                {"field":"index","field_type":"Text","store":true,"index_lexical":false,"index_vector":false}]"#,
+                                    LexicalSimilarity::Bm25f,TokenizerType::UnicodeAlphanumeric)};
+
+                                let _ =create_index_api(
+                                    &index_path,
+                                    indexname_schemajson.0.into(),
+                                    serde_json::from_str(indexname_schemajson.1).unwrap(),
+                                    indexname_schemajson.2,
+                                    indexname_schemajson.3,
+                                    StemmerType::None,
+                                    StopwordType::None,
+                                    FrequentwordType::English,
+                                    NgramSet::SingleTerm as u8 ,
+                                    DocumentCompression::Snappy,
+                                    Vec::new(),
+                                    None,
+                                    apikey_object,
+
+                                    None,
+                                    None,
+                                    false,
+                                    Clustering::Auto,
+                                    Inference::External { dimensions: 128, precision: Precision::F32, quantization: Quantization::I8,similarity:VectorSimilarity::Euclidean } ,
+                                ).await;
+
+                                let index_id=0;
+                                if let Some(index_arc) = apikey_object.index_list.get_mut(&index_id) {
+                                    ingest_sift(index_arc, Path::new(r"C:\linux_remote\testset\sift_base.fvecs"), None).await;
+                                }
+                            }
+                        }
+
                         "ingest" =>
                         {
                             if !parameter.is_empty() {
@@ -202,7 +798,14 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                             apikey_list_mut.get_mut(&apikey_hash)
                                         } else if dash.get("k").unwrap_or(&"".to_owned())==&demo_api_key_base64{
 
-                                            let apikey_quota_object=ApikeyQuotaObject {..Default::default()};
+                                            let apikey_quota_object=ApikeyQuotaObject {
+                                                indices_max: 10,
+                                                indices_size_max: 100_000_000_000,
+                                                documents_max: 100_000_000,
+                                                operations_max: 1_000_000_000,
+                                                rate_limit:None,
+                                                ..Default::default()
+                                            };
                                             Some(create_apikey_api(
                                                 &index_path,
                                                 apikey_quota_object,
@@ -213,7 +816,14 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                             None
                                         }
                                     } else {
-                                        let apikey_quota_object=ApikeyQuotaObject {..Default::default()};
+                                        let apikey_quota_object=ApikeyQuotaObject {
+                                            indices_max: 10,
+                                            indices_size_max: 100_000_000_000,
+                                            documents_max: 100_000_000,
+                                            operations_max: 1_000_000_000,
+                                            rate_limit:None,
+                                            ..Default::default()
+                                        };
                                         Some(create_apikey_api(
                                             &index_path,
                                             apikey_quota_object,
@@ -235,20 +845,20 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                             } else if apikey_object.index_list.is_empty() || !apikey_object.index_list.contains_key(&0) {
                                                     let indexname_schemajson = if md.is_file() && data_path.display().to_string().to_lowercase().ends_with(WIKIPEDIA_FILENAME)
                                                     {("wikipedia_demo",r#"
-                                                [{"field":"title","field_type":"Text","stored":true,"indexed":true,"boost":10.0,"dictionary_source": true, "completion_source": true},
-                                                {"field":"body","field_type":"Text","stored":true,"indexed":true,"longest":true,"dictionary_source": true},
-                                                {"field":"url","field_type":"Text","stored":true,"indexed":false}]"#,SimilarityType::Bm25fProximity,TokenizerType::UnicodeAlphanumericFolded  )}
+                                                [{"field":"title","field_type":"Text","store":true,"index_lexical":true,"index_vector":true,"dictionary_source": false, "completion_source": false,"boost":10.0},
+                                                {"field":"body","field_type":"Text","store":true,"index_lexical":true,"index_vector":true,"longest":true,"dictionary_source": false},
+                                                {"field":"url","field_type":"Text","store":true,"index_lexical":false}]"#,LexicalSimilarity::Bm25fProximity,TokenizerType::UnicodeAlphanumericFolded  )}
                                                     else if md.is_file() && data_path.display().to_string().to_lowercase().ends_with(MSMARCO_FILENAME)
                                                     {("msmarco_demo", r#"
-                                                    [{"field":"url","field_type":"Text","stored":false,"indexed":false},
-                                                    {"field":"title","field_type":"Text","stored":false,"indexed":false},
-                                                    {"field":"body","field_type":"Text","stored":false,"indexed":true,"longest":true}]"# ,SimilarityType::Bm25f,TokenizerType::UnicodeAlphanumeric )
+                                                    [{"field":"url","field_type":"Text","store":false,"index_lexical":false},
+                                                    {"field":"title","field_type":"Text","store":false,"index_lexical":false},
+                                                    {"field":"body","field_type":"Text","store":false,"index_lexical":true,"longest":true}]"# ,LexicalSimilarity::Bm25f,TokenizerType::UnicodeAlphanumeric )
                                                     }
                                                     else {("pdf_demo", r#"
-                                                [{"field":"title","field_type":"Text","stored":true,"indexed":true,"boost":10.0},
-                                                {"field":"body","field_type":"Text","stored":true,"indexed":true,"longest":true},
-                                                {"field":"url","field_type":"Text","stored":true,"indexed":false},
-                                                {"field":"date","field_type":"Timestamp","stored":true,"indexed":false,"facet":true}]"#,SimilarityType::Bm25fProximity,TokenizerType::UnicodeAlphanumeric )};
+                                                [{"field":"title","field_type":"Text","store":true,"index_lexical":true,"boost":10.0},
+                                                {"field":"body","field_type":"Text","store":true,"index_lexical":true,"longest":true},
+                                                {"field":"url","field_type":"Text","store":true,"index_lexical":false},
+                                                {"field":"date","field_type":"Timestamp","store":true,"index_lexical":false,"facet":true}]"#,LexicalSimilarity::Bm25fProximity,TokenizerType::UnicodeAlphanumeric )};
 
                                                     create_index_api(
                                                         &index_path,
@@ -264,9 +874,11 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                                         Vec::new(),
                                                         None,
                                                         apikey_object,
-                                                        Some(SpellingCorrection { max_dictionary_edit_distance: 1, term_length_threshold: Some([2,8].into()),count_threshold: 20, max_dictionary_entries: 500_000 }),
-                                                        Some(QueryCompletion {max_completion_entries:10_000_000_000}),
-                                                        false
+                                                        None,
+                                                        None,
+                                                        false,
+                                                        Clustering::Auto,
+                                                        Inference::Model2Vec { model: Model::PotionBase2M, chunk_size: 1000, quantization: Quantization::I8 },
                                                     ).await
                                                 } else {
                                                     0
@@ -286,7 +898,10 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                                                 index_arc.ingest_pdf(data_path).await;
                                                             }
                                                             "json" =>{
+
+
                                                                 index_arc.ingest_json(data_path).await;
+
                                                             }
                                                             "csv" =>{
                                                                 index_arc.ingest_csv(
@@ -367,11 +982,20 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                             }
                         },
 
+
+
                         "create" =>
                         {
                             println!("create demo api_key");
                             let mut apikey_list_mut = apikey_list_clone.write().await;
-                            let apikey_quota_object=ApikeyQuotaObject {..Default::default()};
+                            let apikey_quota_object=ApikeyQuotaObject {
+                                indices_max: 10,
+                                indices_size_max: 100_000_000_000,
+                                documents_max: 100_000_000,
+                                operations_max: 1_000_000_000,
+                                rate_limit:None,
+                                ..Default::default()
+                            };
                             create_apikey_api(
                                 &index_path,
                                 apikey_quota_object,
@@ -388,6 +1012,8 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                             let _ = delete_apikey_api(&index_path, &mut apikey_list_mut, apikey_hash);
                             drop(apikey_list_mut);
                         },
+
+
 
                         "openapi" =>
                         {

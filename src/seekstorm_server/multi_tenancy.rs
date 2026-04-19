@@ -11,15 +11,23 @@ use crate::http_server::calculate_hash;
 #[derive(Default, Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct ApikeyQuotaObject {
     /// number of indices per API key
-    pub indices_max: u64,
+    pub indices_max: usize,
     /// combined index size per API key in MB
-    pub indices_size_max: u64,
+    pub indices_size_max: usize,
     /// combined number of documents in all indices per API key
-    pub documents_max: u64,
+    pub documents_max: usize,
     /// operations per month per API key: index/update/delete/query doc
-    pub operations_max: u64,
+    pub operations_max: usize,
     /// queries per sec per API key
-    pub rate_limit: u64,
+    pub rate_limit: Option<usize>,
+    /// for rate limit: time of first access within current window
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub timestamp_nanos: usize,
+    #[serde(skip)]
+    #[schema(ignore)]
+    /// for rate limit: number of violations within current window
+    pub violation_count: usize,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -31,6 +39,7 @@ pub(crate) struct ApikeyObject {
     /// Quota per API key
     pub quota: ApikeyQuotaObject,
 
+    /// list of index_id below this apikey
     #[serde(skip)]
     pub index_list: HashMap<u64, IndexArc>,
 }

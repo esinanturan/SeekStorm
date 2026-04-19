@@ -32,22 +32,22 @@ content-type: application/json
     "schema":[{
         "field": "title", 
         "field_type": "Text", 
-        "stored": true, 
-        "indexed": true,
+        "store": true, 
+        "index_lexical": true,
         "boost":10.0
     },
         {
         "field": "body",
         "field_type": "Text", 
-        "stored": true, 
-        "indexed": true,
+        "store": true, 
+        "index_lexical": true,
         "longest": true
     },
     {
         "field": "url", 
         "field_type": "String32", 
-        "stored": true, 
-        "indexed": false
+        "store": true, 
+        "index_lexical": false
     }], 
     "index_name": "test_index",
     "similarity": "Bm25fProximity",
@@ -234,27 +234,27 @@ content-type: application/json
     "schema":[{
         "field": "title",
         "field_type": "Text", 
-        "stored": true,  
-        "indexed": true,
+        "store": true,  
+        "index_lexical": true,
         "boost":10.0
     },
         {
         "field": "body", 
         "field_type": "Text", 
-        "stored": true, 
-        "indexed": true
+        "store": true, 
+        "index_lexical": true
     },
     {
         "field": "url", 
         "field_type": "String32", 
-        "stored": true, 
-        "indexed": false
+        "store": true, 
+        "index_lexical": false
     },
     {
         "field": "number", 
         "field_type": "I64", 
-        "stored": true, 
-        "indexed": true
+        "store": true, 
+        "index_lexical": true
     }],
     "index_name": "test_index",
     "similarity": "Bm25fProximity",
@@ -433,21 +433,21 @@ content-type: application/json
     "schema":[{
         "field": "title", 
         "field_type": "Text", 
-        "stored": true, 
-        "indexed": true
+        "store": true, 
+        "index_lexical": true
     },
         {
         "field": "body",
         "field_type": "Text", 
-        "stored": true, 
-        "indexed": true,
+        "store": true, 
+        "index_lexical": true,
         "longest": true
     },
     {
         "field": "json", 
         "field_type": "Json", 
-        "stored": true, 
-        "indexed": true
+        "store": true, 
+        "index_lexical": true
     }], 
     "index_name": "test_index",
     "similarity": "Bm25fProximity",
@@ -491,4 +491,255 @@ content-type: application/json
     "length":10,
     "result_type": "TopkCount",
     "realtime": true
+}
+
+
+// amazon.csv
+
+### create index
+POST http://127.0.0.1:80/api/v1/index HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+{
+    "schema":[{
+        "field": "number", 
+        "field_type": "U32", 
+        "store": true, 
+        "index_lexical": false
+    },
+    {
+        "field": "image",
+        "field_type": "Binary", 
+        "store": true, 
+        "index_lexical": false
+    },
+    {
+        "field": "title",
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": true
+    },
+    {
+        "field": "url",
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": false
+    },
+    {
+        "field": "body",
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": true,
+        "longest": true
+    },
+    {
+        "field": "about",
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": true
+    },
+    {
+        "field": "manufacturer",
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": true
+    },
+    {
+        "field": "brand",
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": true
+    },
+    {
+        "field": "category",
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": true
+    }
+    ], 
+    "index_name": "amazon_index",
+    "similarity": "Bm25fProximity",
+    "tokenizer": "UnicodeAlphanumeric"
+}
+
+// realtime vector search
+
+### create index
+POST http://127.0.0.1:80/api/v1/index HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+{
+    "schema":[{
+        "field": "title", 
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": false,
+        "index_vector": true
+    },
+    {
+        "field": "body",
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": false,
+        "index_vector": true
+    },
+        {
+        "field": "url", 
+        "field_type": "String32", 
+        "store": true, 
+        "index_lexical": false,
+        "index_vector": false
+    }], 
+    "index_name": "test_index",
+    "clustering": "None",
+    "inference": {"Model2Vec": { "model": "PotionBase2M", "chunk_size": 1000, "quantization": "I8" }}
+}
+
+### index document
+POST http://127.0.0.1:80/api/v1/index/0/doc HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+[
+    {"title":"pink panther","body":"animal from a comedy","url":"url1"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"red fox","body":"small carnivorous mammal","url":"url3"}
+]
+
+### query index POST
+POST http://127.0.0.1/api/v1/index/0/query HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+{
+    "query":"rosy panther",
+    "offset":0,
+    "length":10,
+    "result_type": "TopkCount",
+    "realtime": true,
+    "search_mode": {"Vector":{"similarity_threshold": 0.7, "ann_mode": "Auto"}}
+}
+
+// commit incomplete levels
+
+### create index
+POST http://127.0.0.1:80/api/v1/index HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+{
+    "schema":[{
+        "field": "title", 
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": false,
+        "index_vector": true
+    },
+    {
+        "field": "body",
+        "field_type": "Text", 
+        "store": true, 
+        "index_lexical": false,
+        "index_vector": true
+    },
+        {
+        "field": "url", 
+        "field_type": "String32", 
+        "store": true, 
+        "index_lexical": false,
+        "index_vector": false
+    }], 
+    "index_name": "test_index",
+    "clustering": "None",
+    "inference": {"Model2Vec": { "model": "PotionBase2M", "chunk_size": 1000, "quantization": "I8" }}
+}
+
+### index document
+POST http://127.0.0.1:80/api/v1/index/0/doc HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+[
+    {"title":"pink panther","body":"animal from a comedy","url":"url1"},
+
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+
+    {"title":"red fox","body":"small carnivorous mammal","url":"url3"}
+]
+
+### commit index
+PATCH http://127.0.0.1/api/v1/index/0 HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+### index document
+POST http://127.0.0.1:80/api/v1/index/0/doc HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+[
+    {"title":"pink panther","body":"animal from a comedy","url":"url1"},
+
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    {"title":"blue whale","body":"largest mammal in the ocean","url":"url2"},
+    
+    {"title":"red fox","body":"small carnivorous mammal","url":"url3"}
+]
+
+### commit index
+PATCH http://127.0.0.1/api/v1/index/0 HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+### query index POST
+POST http://127.0.0.1/api/v1/index/0/query HTTP/1.1
+apikey: {{api_key}}
+content-type: application/json
+
+{
+    "query":"rosy panther",
+    "offset":0,
+    "length":10,
+    "result_type": "TopkCount",
+    "realtime": false,
+    "search_mode": {"Vector":{"similarity_threshold": 0.7, "ann_mode": "Auto"}}
 }

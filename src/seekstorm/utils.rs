@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+use std::{fs, io};
+
 use base64::Engine;
 use base64::engine::general_purpose;
 
@@ -177,4 +180,24 @@ pub fn encode_bytes_to_base64_string(input: &[u8]) -> String {
 /// Decodes a base64 string into a byte vector.
 pub fn decode_bytes_from_base64_string(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
     general_purpose::STANDARD.decode(input)
+}
+
+/// Recursively calculates the total size of a directory, including all subdirectories and files.
+pub fn dir_size(path: impl Into<PathBuf>) -> io::Result<u64> {
+    let path = path.into();
+    if !path.exists() {
+        return Ok(0);
+    }
+    fn dir_size(mut dir: fs::ReadDir) -> io::Result<u64> {
+        dir.try_fold(0, |acc, file| {
+            let file = file?;
+            let size = match file.metadata()? {
+                data if data.is_dir() => dir_size(fs::read_dir(file.path())?)?,
+                data => data.len(),
+            };
+            Ok(acc + size)
+        })
+    }
+
+    dir_size(fs::read_dir(path)?)
 }

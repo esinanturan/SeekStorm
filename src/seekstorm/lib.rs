@@ -17,9 +17,7 @@
 //! use std::error::Error;
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-//!
 //! // your SeekStorm code here
-//!
 //!   Ok(())
 //! }
 //! ```
@@ -28,18 +26,19 @@
 //! # tokio_test::block_on(async {
 //! use std::path::Path;
 //! use std::sync::{Arc, RwLock};
-//! use seekstorm::index::{IndexMetaObject, SimilarityType,TokenizerType,StopwordType,FrequentwordType,AccessType,StemmerType,NgramSet,DocumentCompression,create_index};
-//!
+//! use seekstorm::index::{IndexMetaObject, Clustering, LexicalSimilarity,TokenizerType,StopwordType,FrequentwordType,AccessType,StemmerType,NgramSet,DocumentCompression,create_index};
+//! use seekstorm::vector::Inference;
+//! use seekstorm::vector_similarity::VectorSimilarity;
 //! let index_path=Path::new("C:/index/");
 //! let schema_json = r#"
-//! [{"field":"title","field_type":"Text","stored":false,"indexed":false},
-//! {"field":"body","field_type":"Text","stored":true,"indexed":true},
-//! {"field":"url","field_type":"Text","stored":false,"indexed":false}]"#;
+//! [{"field":"title","field_type":"Text","store":false,"index_lexical":false},
+//! {"field":"body","field_type":"Text","store":true,"index_lexical":true},
+//! {"field":"url","field_type":"Text","store":false,"index_lexical":false}]"#;
 //! let schema=serde_json::from_str(schema_json).unwrap();
 //! let meta = IndexMetaObject {
 //! id: 0,
-//! name: "test_index".into(),
-//! similarity: SimilarityType::Bm25f,
+//! name: "test_index".to_string(),
+//! lexical_similarity: LexicalSimilarity::Bm25f,
 //! tokenizer: TokenizerType::AsciiAlphabetic,
 //! stemmer: StemmerType::None,
 //! stop_words: StopwordType::None,
@@ -49,6 +48,8 @@
 //! access_type: AccessType::Mmap,
 //! spelling_correction: None,
 //! query_completion: None,
+//! clustering: Clustering::None,
+//! inference: Inference::None,
 //! };
 //! let segment_number_bits1=11;
 //! let serialize_schema=true;
@@ -60,7 +61,6 @@
 //! # tokio_test::block_on(async {
 //! use seekstorm::index::open_index;
 //! use std::path::Path;
-//!
 //! let index_path=Path::new("C:/index/");
 //! let index_arc=open_index(index_path,false).await.unwrap();
 //! # });
@@ -74,7 +74,6 @@
 //! # let index_arc=open_index(index_path,false).await.unwrap();
 //! use seekstorm::index::IndexDocument;
 //! use seekstorm::index::FileType;
-//!
 //! let document_json = r#"
 //! {"title":"title1 test","body":"body1","url":"url1"}"#;
 //! let document=serde_json::from_str(document_json).unwrap();
@@ -105,7 +104,6 @@
 //! # let index_path=Path::new("C:/index/");
 //! # let index_arc=open_index(index_path,false).await.unwrap();
 //! use seekstorm::index::DeleteDocuments;
-//!
 //! let docid_vec=vec![1,2];
 //! index_arc.delete_documents(docid_vec).await;
 //! # });
@@ -119,7 +117,6 @@
 //! # let index_arc=open_index(index_path,false).await.unwrap();
 //! use seekstorm::search::QueryType;
 //! use seekstorm::index::DeleteDocumentsByQuery;
-//!
 //! let query="test".to_string();
 //! let offset=0;
 //! let length=10;
@@ -140,15 +137,12 @@
 //! # let index_arc=open_index(index_path,false).await.unwrap();
 //! use seekstorm::index::UpdateDocuments;
 //! use seekstorm::commit::Commit;
-//!
 //! let id_document_vec_json = r#"
 //! [[1,{"title":"title1 test","body":"body1","url":"url1"}],
 //! [2,{"title":"title3 test","body":"body3 test","url":"url3"}]]"#;
 //! let id_document_vec=serde_json::from_str(id_document_vec_json).unwrap();
 //! index_arc.update_documents(id_document_vec).await;
-//!
 //! // ### commit documents
-//!
 //! index_arc.commit().await;
 //! # });
 //! ```
@@ -159,9 +153,10 @@
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
 //! # let index_arc=open_index(index_path,false).await.unwrap();
-//! use seekstorm::search::{Search, QueryType, ResultType, QueryRewriting};
-//!
+//! use seekstorm::search::{Search, SearchMode, QueryType, ResultType, QueryRewriting};
 //! let query="test".to_string();
+//! let query_vector=None;
+//! let search_mode=SearchMode::Lexical;
 //! let enable_empty_query=false;
 //! let offset=10;
 //! let length=10;
@@ -172,13 +167,10 @@
 //! let query_facets=Vec::new();
 //! let facet_filter=Vec::new();
 //! let result_sort=Vec::new();
-//! let result_object = index_arc.search(query, query_type,  enable_empty_query, offset, length, result_type,include_uncommitted,field_filter,query_facets,facet_filter,result_sort,QueryRewriting::SearchOnly).await;
-//!
+//! let result_object = index_arc.search(query, query_vector, query_type, search_mode, enable_empty_query, offset, length, result_type,include_uncommitted,field_filter,query_facets,facet_filter,result_sort,QueryRewriting::SearchOnly).await;
 //! // ### display results
-//!
 //! use seekstorm::highlighter::{Highlight, highlighter};
 //! use std::collections::HashSet;
-//!
 //! let highlights:Vec<Highlight>= vec![
 //! Highlight {
 //!     field: "body".to_string(),
@@ -208,7 +200,6 @@
 //! # let index_path=Path::new("C:/index/");
 //! # let index_arc=open_index(index_path,false).await.unwrap();
 //! use std::collections::HashSet;
-//!
 //! let doc_id=0;
 //! let highlighter=None;
 //! let return_fields_filter= HashSet::new();
@@ -225,7 +216,6 @@
 //! # let mut index_arc=open_index(index_path,false).await.unwrap();
 //! use seekstorm::ingest::IngestJson;
 //! use std::path::Path;
-//!
 //! let file_path=Path::new("wiki-articles.json");
 //! let _ =index_arc.ingest_json(file_path).await;
 //! # });
@@ -241,27 +231,27 @@
 //! [
 //!   {
 //!     "field": "title",
-//!     "stored": true,
-//!     "indexed": true,
+//!     "store": true,
+//!     "index_lexical": true,
 //!     "field_type": "Text",
 //!     "boost": 10
 //!   },
 //!   {
 //!     "field": "body",
-//!     "stored": true,
-//!     "indexed": true,
+//!     "store": true,
+//!     "index_lexical": true,
 //!     "field_type": "Text"
 //!   },
 //!   {
 //!     "field": "url",
-//!     "stored": true,
-//!     "indexed": false,
+//!     "store": true,
+//!     "index_lexical": false,
 //!     "field_type": "Text"
 //!   },
 //!   {
 //!     "field": "date",
-//!     "stored": true,
-//!     "indexed": false,
+//!     "store": true,
+//!     "index_lexical": false,
 //!     "field_type": "Timestamp",
 //!     "facet": true
 //!   }
@@ -274,7 +264,6 @@
 //! # let mut index_arc=open_index(index_path,false).await.unwrap();
 //! use std::path::Path;
 //! use seekstorm::ingest::IngestPdf;
-//!
 //! let file_path=Path::new("C:/Users/johndoe/Downloads");
 //! let _ =index_arc.ingest_pdf(file_path).await;
 //! # });
@@ -287,7 +276,6 @@
 //! # let mut index_arc=open_index(index_path,false).await.unwrap();
 //! use std::path::Path;
 //! use seekstorm::ingest::IndexPdfFile;
-//!
 //! let file_path=Path::new("C:/test.pdf");
 //! let _ =index_arc.index_pdf_file(file_path).await;
 //! # });
@@ -302,7 +290,6 @@
 //! use std::fs;
 //! use chrono::Utc;
 //! use seekstorm::ingest::IndexPdfBytes;
-//!
 //! let file_date=Utc::now().timestamp();
 //! let file_path=Path::new("C:/test.pdf");
 //! let document = fs::read(file_path).unwrap();
@@ -348,18 +335,15 @@
 //! # let index_path=Path::new("C:/index/");
 //! # let mut index_arc=open_index(index_path,false).await.unwrap();
 //! use seekstorm::index::Close;
-//!
 //! index_arc.close().await;
 //! # });
 //! ```
 //! ### seekstorm library version string
 //! ```no_run
 //! use seekstorm::index::version;
-//!
 //! let version=version();
 //! println!("version {}",version);
 //! ```
-//!
 //! ----------------
 //! ### Faceted search - Quick start
 //! **Facets are defined in 3 different places:**
@@ -374,19 +358,20 @@
 //! ```no_run
 //! # tokio_test::block_on(async {
 //! use std::path::Path;
-//! use seekstorm::index::{IndexMetaObject, SimilarityType,TokenizerType,StopwordType,FrequentwordType,AccessType,StemmerType,NgramSet,DocumentCompression,create_index};
-//!
+//! use seekstorm::index::{IndexMetaObject, Clustering, LexicalSimilarity,TokenizerType,StopwordType,FrequentwordType,AccessType,StemmerType,NgramSet,DocumentCompression,create_index};
+//! use seekstorm::vector::Inference;
+//! use seekstorm::vector_similarity::VectorSimilarity;
 //! let index_path=Path::new("C:/index/");
 //! let schema_json = r#"
-//! [{"field":"title","field_type":"Text","stored":false,"indexed":false},
-//! {"field":"body","field_type":"Text","stored":true,"indexed":true},
-//! {"field":"url","field_type":"Text","stored":true,"indexed":false},
-//! {"field":"town","field_type":"String15","stored":false,"indexed":false,"facet":true}]"#;
+//! [{"field":"title","field_type":"Text","store":false,"index_lexical":false},
+//! {"field":"body","field_type":"Text","store":true,"index_lexical":true},
+//! {"field":"url","field_type":"Text","store":true,"index_lexical":false},
+//! {"field":"town","field_type":"String15","store":false,"index_lexical":false,"facet":true}]"#;
 //! let schema=serde_json::from_str(schema_json).unwrap();
 //! let meta = IndexMetaObject {
 //!     id: 0,
-//!     name: "test_index".into(),
-//!     similarity: SimilarityType::Bm25f,
+//!     name: "test_index".to_string(),
+//!     lexical_similarity: LexicalSimilarity::Bm25f,
 //!     tokenizer: TokenizerType::AsciiAlphabetic,
 //!     stemmer: StemmerType::None,
 //!     stop_words: StopwordType::None,
@@ -396,6 +381,8 @@
 //!     access_type: AccessType::Mmap,
 //!     spelling_correction: None,
 //!     query_completion: None,
+//!     clustering: Clustering::None,
+//!     inference: Inference::None,
 //! };
 //! let serialize_schema=true;
 //! let segment_number_bits1=11;
@@ -412,16 +399,13 @@
 //! use seekstorm::index::IndexDocuments;
 //! use seekstorm::commit::Commit;
 //! use seekstorm::search::{QueryType, ResultType, QueryFacet, FacetFilter};
-//!
 //! let documents_json = r#"
 //! [{"title":"title1 test","body":"body1","url":"url1","town":"Berlin"},
 //! {"title":"title2","body":"body2 test","url":"url2","town":"Warsaw"},
 //! {"title":"title3 test","body":"body3 test","url":"url3","town":"New York"}]"#;
 //! let documents_vec=serde_json::from_str(documents_json).unwrap();
 //! index_arc.index_documents(documents_vec).await;
-//!
 //! // ### commit documents
-//!
 //! index_arc.commit().await;
 //! # });
 //! ```
@@ -432,9 +416,10 @@
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
 //! # let index_arc=open_index(index_path,false).await.unwrap();
-//! use seekstorm::search::{QueryType, ResultType, QueryFacet, FacetFilter, QueryRewriting,Search};
-//!
+//! use seekstorm::search::{QueryType, SearchMode, ResultType, QueryFacet, FacetFilter, QueryRewriting,Search};
 //! let query="test".to_string();
+//! let query_vector=None;
+//! let search_mode=SearchMode::Lexical;
 //! let enable_empty_query=false;
 //! let offset=0;
 //! let length=10;
@@ -446,13 +431,10 @@
 //! let facet_filter=Vec::new();
 //! //let facet_filter = vec![FacetFilter {field: "town".to_string(),   filter:Filter::String(vec!["Berlin".to_string()])}];
 //! let result_sort=Vec::new();
-//! let result_object = index_arc.search(query, query_type,  enable_empty_query, offset, length, result_type,include_uncommitted,field_filter,query_facets,facet_filter,result_sort,QueryRewriting::SearchOnly).await;
-//!
+//! let result_object = index_arc.search(query, query_vector, query_type, search_mode, enable_empty_query, offset, length, result_type,include_uncommitted,field_filter,query_facets,facet_filter,result_sort,QueryRewriting::SearchOnly).await;
 //! // ### display results
-//!
 //! use std::collections::HashSet;
 //! use seekstorm::highlighter::{highlighter, Highlight};
-//!
 //! let highlights:Vec<Highlight>= vec![
 //!         Highlight {
 //!             field: "body".to_owned(),
@@ -472,12 +454,18 @@
 //!   println!("result {} rank {} body field {:?}" , result.doc_id,result.score, doc.get("body"));
 //! }
 //! println!("result counts {} {} {}",result_object.results.len(), result_object.result_count, result_object.result_count_total);
-//!
 //! // ### display facets
-//!
 //! println!("{}", serde_json::to_string_pretty(&result_object.facets).unwrap());
 //! # });
 //! ```
+
+#![warn(
+    missing_docs,
+    unused_import_braces,
+    trivial_casts,
+    trivial_numeric_casts,
+    unused_qualifications
+)]
 
 /// include README.md in documentation
 #[cfg_attr(doctest, doc = include_str!("../../README.md"))]
@@ -488,6 +476,7 @@ pub struct ReadmeDoctests;
 pub struct ReadmeDoctests2;
 
 pub(crate) mod add_result;
+pub(crate) mod clustering;
 /// Commit moves indexed documents from the intermediate uncompressed data structure in RAM
 /// to the final compressed data structure on disk.
 pub mod commit;
@@ -519,5 +508,9 @@ pub(crate) mod tokenizer;
 pub(crate) mod union;
 /// Utils `truncate()` and `substring()`
 pub mod utils;
+/// Vector search by indexing vectors and searching for similar vectors based on cosine similarity, inner product, and Euclidean distance.
+pub mod vector;
+/// Vector quantization and similarity measure definitions for vector search.
+pub mod vector_similarity;
 #[cfg(feature = "zh")]
 pub(crate) mod word_segmentation;
