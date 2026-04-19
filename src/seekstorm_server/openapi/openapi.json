@@ -11,7 +11,7 @@
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
     },
-    "version": "2.3.0"
+    "version": "3.0.0"
   },
   "servers": [
     {
@@ -20,17 +20,17 @@
     }
   ],
   "paths": {
-    "/api/v1/hello": {
+    "/api/v1/live": {
       "get": {
         "tags": [
           "Info"
         ],
-        "summary": "Hello",
-        "description": "Returns a hello message with the SeekStorm server version.",
-        "operationId": "hello_api",
+        "summary": "Live",
+        "description": "Returns a live message with the SeekStorm server version.",
+        "operationId": "live_api",
         "responses": {
           "200": {
-            "description": "Hello message",
+            "description": "SeekStorm server is live",
             "content": {
               "text/plain": {
                 "schema": {
@@ -116,37 +116,34 @@
                   "indices_max",
                   "indices_size_max",
                   "documents_max",
-                  "operations_max",
-                  "rate_limit"
+                  "operations_max"
                 ],
                 "properties": {
                   "indices_max": {
                     "type": "integer",
-                    "format": "int64",
                     "description": "number of indices per API key",
                     "minimum": 0
                   },
                   "indices_size_max": {
                     "type": "integer",
-                    "format": "int64",
                     "description": "combined index size per API key in MB",
                     "minimum": 0
                   },
                   "documents_max": {
                     "type": "integer",
-                    "format": "int64",
                     "description": "combined number of documents in all indices per API key",
                     "minimum": 0
                   },
                   "operations_max": {
                     "type": "integer",
-                    "format": "int64",
                     "description": "operations per month per API key: index/update/delete/query doc",
                     "minimum": 0
                   },
                   "rate_limit": {
-                    "type": "integer",
-                    "format": "int64",
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
                     "description": "queries per sec per API key",
                     "minimum": 0
                   }
@@ -255,34 +252,34 @@
                       {
                         "field": "title",
                         "field_type": "Text",
-                        "stored": true,
-                        "indexed": true,
+                        "store": true,
+                        "index_lexical": true,
                         "boost": 10.0
                       },
                       {
                         "field": "body",
                         "field_type": "Text",
-                        "stored": true,
-                        "indexed": true,
+                        "store": true,
+                        "index_lexical": true,
                         "longest": true
                       },
                       {
                         "field": "url",
                         "field_type": "Text",
-                        "stored": true,
-                        "indexed": false
+                        "store": true,
+                        "index_lexical": false
                       },
                       {
                         "field": "date",
                         "field_type": "Timestamp",
-                        "stored": true,
-                        "indexed": false,
+                        "store": true,
+                        "index_lexical": false,
                         "facet": true
                       }
                     ]
                   },
                   "similarity": {
-                    "$ref": "#/components/schemas/SimilarityType"
+                    "$ref": "#/components/schemas/LexicalSimilarity"
                   },
                   "tokenizer": {
                     "$ref": "#/components/schemas/TokenizerType"
@@ -349,6 +346,12 @@
                         "$ref": "#/components/schemas/QueryCompletion"
                       }
                     ]
+                  },
+                  "clustering": {
+                    "$ref": "#/components/schemas/Clustering"
+                  },
+                  "inference": {
+                    "$ref": "#/components/schemas/Inference"
                   }
                 }
               }
@@ -549,7 +552,7 @@
           "Iterator"
         ],
         "summary": "Document iterator",
-        "description": "Document iterator via GET and POST are identical, only the way parameters are passed differ.\nThe document iterator allows to iterate over all document IDs and documents in the entire index, forward or backward.\nIt enables efficient sequential access to every document, even in very large indexes, without running a search.\nPaging through the index works without collecting document IDs to Min-heap in size-limited RAM first.\nThe iterator guarantees that only valid document IDs are returned, even though document IDs are not strictly continuous.\nDocument IDs can also be fetched in batches, reducing round trips and significantly improving performance, especially when using the REST API.\nTypical use cases include index export, conversion, analytics, audits, and inspection.\nExplanation of \"eventually continuous\" docid:\nIn SeekStorm, document IDs become continuous over time. In a multi-sharded index, each shard maintains its own document ID space.\nBecause documents are distributed across shards in a non-deterministic, load-dependent way, shard-local document IDs advance at different rates.\nWhen these are mapped to global document IDs, temporary gaps can appear.\nAs a result, simply iterating from 0 to the total document count may encounter invalid IDs near the end.\nThe Document Iterator abstracts this complexity and reliably returns only valid document IDs.\n\n# Parameters\n- docid=None, take>0: **skip first s document IDs**, then **take next t document IDs** of an index.\n- docid=None, take<0: **skip last s document IDs**, then **take previous t document IDs** of an index.\n- docid=Some, take>0: **skip next s document IDs**, then **take next t document IDs** of an index, relative to a given document ID, with end-of-index indicator.\n- docid=Some, take<0: **skip previous s document IDs**, then **take previous t document IDs**, relative to a given document ID, with start-of-index indicator.\n- take=0: does not make sense, that defies the purpose of get_iterator.\n- The sign of take indicates the direction of iteration: positive take for forward iteration, negative take for backward iteration.\n- The skip parameter is always positive, indicating the number of document IDs to skip before taking document IDs. The skip direction is determined by the sign of take too.\n- include_document: if true, the documents are also retrieved along with their document IDs.\n\nNext page:     take last  docid from previous result set, skip=1, take=+page_size\nPrevious page: take first docid from previous result set, skip=1, take=-page_size\n\nReturns an IteratorResult, consisting of the number of actually skipped document IDs, and a list of taken document IDs and documents, sorted ascending).\nDetect end/begin of index during iteration: if returned vec.len() < requested take || if returned skip <requested skip",
+        "description": "Document iterator via GET and POST are identical, only the way parameters are passed differ.\nThe document iterator allows to iterate over all document IDs and documents in the entire index, forward or backward.\nIt enables efficient sequential access to every document, even in very large indexes, without running a search.\nPaging through the index works without collecting document IDs to Min-heap in size-limited RAM first.\nThe iterator guarantees that only valid document IDs are returned, even though document IDs are not strictly continuous.\nDocument IDs can also be fetched in batches, reducing round trips and significantly improving performance, especially when using the REST API.\nTypical use cases include index export, conversion, analytics, audits, and inspection.\nExplanation of \"eventually continuous\" docid:\nIn SeekStorm, document IDs become continuous over time. In a multi-sharded index, each shard maintains its own document ID space.\nBecause documents are distributed across shards in a non-deterministic, load-dependent way, shard-local document IDs advance at different rates.\nWhen these are mapped to global document IDs, temporary gaps can appear.\nAs a result, simply iterating from 0 to the total document count may encounter invalid IDs near the end.\nThe Document Iterator abstracts this complexity and reliably returns only valid document IDs.\n# Parameters\n- docid=None, take>0: **skip first s document IDs**, then **take next t document IDs** of an index.\n- docid=None, take<0: **skip last s document IDs**, then **take previous t document IDs** of an index.\n- docid=Some, take>0: **skip next s document IDs**, then **take next t document IDs** of an index, relative to a given document ID, with end-of-index indicator.\n- docid=Some, take<0: **skip previous s document IDs**, then **take previous t document IDs**, relative to a given document ID, with start-of-index indicator.\n- take=0: does not make sense, that defies the purpose of get_iterator.\n- The sign of take indicates the direction of iteration: positive take for forward iteration, negative take for backward iteration.\n- The skip parameter is always positive, indicating the number of document IDs to skip before taking document IDs. The skip direction is determined by the sign of take too.\n- include_document: if true, the documents are also retrieved along with their document IDs.\nNext page:     take last  docid from previous result set, skip=1, take=+page_size\nPrevious page: take first docid from previous result set, skip=1, take=-page_size\nReturns an IteratorResult, consisting of the number of actually skipped document IDs, and a list of taken document IDs and documents, sorted ascending).\nDetect end/begin of index during iteration: if returned vec.len() < requested take || if returned skip <requested skip",
         "operationId": "get_iterator_api_get",
         "parameters": [
           {
@@ -673,7 +676,7 @@
           "Iterator"
         ],
         "summary": "Document iterator",
-        "description": "Document iterator via GET and POST are identical, only the way parameters are passed differ.\nThe document iterator allows to iterate over all document IDs and documents in the entire index, forward or backward.\nIt enables efficient sequential access to every document, even in very large indexes, without running a search.\nPaging through the index works without collecting document IDs to Min-heap in size-limited RAM first.\nThe iterator guarantees that only valid document IDs are returned, even though document IDs are not strictly continuous.\nDocument IDs can also be fetched in batches, reducing round trips and significantly improving performance, especially when using the REST API.\nTypical use cases include index export, conversion, analytics, audits, and inspection.\nExplanation of \"eventually continuous\" docid:\nIn SeekStorm, document IDs become continuous over time. In a multi-sharded index, each shard maintains its own document ID space.\nBecause documents are distributed across shards in a non-deterministic, load-dependent way, shard-local document IDs advance at different rates.\nWhen these are mapped to global document IDs, temporary gaps can appear.\nAs a result, simply iterating from 0 to the total document count may encounter invalid IDs near the end.\nThe Document Iterator abstracts this complexity and reliably returns only valid document IDs.\n\n# Parameters\n- docid=None, take>0: **skip first s document IDs**, then **take next t document IDs** of an index.\n- docid=None, take<0: **skip last s document IDs**, then **take previous t document IDs** of an index.\n- docid=Some, take>0: **skip next s document IDs**, then **take next t document IDs** of an index, relative to a given document ID, with end-of-index indicator.\n- docid=Some, take<0: **skip previous s document IDs**, then **take previous t document IDs**, relative to a given document ID, with start-of-index indicator.\n- take=0: does not make sense, that defies the purpose of get_iterator.\n- The sign of take indicates the direction of iteration: positive take for forward iteration, negative take for backward iteration.\n- The skip parameter is always positive, indicating the number of document IDs to skip before taking document IDs. The skip direction is determined by the sign of take too.\n- include_document: if true, the documents are also retrieved along with their document IDs.\n\nNext page:     take last  docid from previous result set, skip=1, take=+page_size\nPrevious page: take first docid from previous result set, skip=1, take=-page_size\n\nReturns an IteratorResult, consisting of the number of actually skipped document IDs, and a list of taken document IDs and documents, sorted ascending).\nDetect end/begin of index during iteration: if returned vec.len() < requested take || if returned skip <requested skip",
+        "description": "Document iterator via GET and POST are identical, only the way parameters are passed differ.\nThe document iterator allows to iterate over all document IDs and documents in the entire index, forward or backward.\nIt enables efficient sequential access to every document, even in very large indexes, without running a search.\nPaging through the index works without collecting document IDs to Min-heap in size-limited RAM first.\nThe iterator guarantees that only valid document IDs are returned, even though document IDs are not strictly continuous.\nDocument IDs can also be fetched in batches, reducing round trips and significantly improving performance, especially when using the REST API.\nTypical use cases include index export, conversion, analytics, audits, and inspection.\nExplanation of \"eventually continuous\" docid:\nIn SeekStorm, document IDs become continuous over time. In a multi-sharded index, each shard maintains its own document ID space.\nBecause documents are distributed across shards in a non-deterministic, load-dependent way, shard-local document IDs advance at different rates.\nWhen these are mapped to global document IDs, temporary gaps can appear.\nAs a result, simply iterating from 0 to the total document count may encounter invalid IDs near the end.\nThe Document Iterator abstracts this complexity and reliably returns only valid document IDs.\n# Parameters\n- docid=None, take>0: **skip first s document IDs**, then **take next t document IDs** of an index.\n- docid=None, take<0: **skip last s document IDs**, then **take previous t document IDs** of an index.\n- docid=Some, take>0: **skip next s document IDs**, then **take next t document IDs** of an index, relative to a given document ID, with end-of-index indicator.\n- docid=Some, take<0: **skip previous s document IDs**, then **take previous t document IDs**, relative to a given document ID, with start-of-index indicator.\n- take=0: does not make sense, that defies the purpose of get_iterator.\n- The sign of take indicates the direction of iteration: positive take for forward iteration, negative take for backward iteration.\n- The skip parameter is always positive, indicating the number of document IDs to skip before taking document IDs. The skip direction is determined by the sign of take too.\n- include_document: if true, the documents are also retrieved along with their document IDs.\nNext page:     take last  docid from previous result set, skip=1, take=+page_size\nPrevious page: take first docid from previous result set, skip=1, take=-page_size\nReturns an IteratorResult, consisting of the number of actually skipped document IDs, and a list of taken document IDs and documents, sorted ascending).\nDetect end/begin of index during iteration: if returned vec.len() < requested take || if returned skip <requested skip",
         "operationId": "get_iterator_api_post",
         "parameters": [
           {
@@ -1455,6 +1458,9 @@
                     "type": "string",
                     "description": "Query string, search operators + - \"\" are recognized."
                   },
+                  "query_vector": {
+                    "description": "Optional query vector: If None, then the query vector is derived from the query string using the specified model. If Some, then the query vector is used for semantic search and the query string is only used for lexical search and highlighting."
+                  },
                   "enable_empty_query": {
                     "type": "boolean",
                     "description": "Enable empty query: if true, an empty query string iterates through all indexed documents, supporting the query parameters: offset, length, query_facets, facet_filter, result_sort,\notherwise an empty query string returns no results.\nTypical use cases include index browsing, index export, conversion, analytics, audits, and inspection.",
@@ -1541,6 +1547,9 @@
                   },
                   "query_rewriting": {
                     "$ref": "#/components/schemas/QueryRewriting"
+                  },
+                  "search_mode": {
+                    "$ref": "#/components/schemas/SearchMode"
                   }
                 }
               }
@@ -1574,6 +1583,97 @@
   },
   "components": {
     "schemas": {
+      "AnnMode": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Search in all clusters (default)",
+            "enum": [
+              "All"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "Search only in the clusters with the highest similarity scores to the query vector.\nThe number of clusters to search is specified by the n-probe parameter.\nYou cannot directly set a specific, guaranteed recall number (e.g., \"always give me 95% recall@10\"). There is no one-fits-all, there is no automatism.\nInstead, you manually tune parameters that control the tradeoff between query latency and accuracy.\nBecause recall depends heavily on the structure of your specific data (distribution, dimensionality, and clustering) and queries,\nthere is always a trial-and-error (benchmarking) phase required to determine the right settings for your data.\nExamples:\nwikipedia, VectorSimilarity::Dot, dimensions: 64, Precision::F32, Clustering::Auto, Clustering::I8, recall@10=95% -> Nprobe(55)\nwikipedia, VectorSimilarity::Dot, dimensions: 64, Precision::F32, Clustering::Auto, Clustering::I8, recall@10=99% -> Nprobe(140)\nsift1m, VectorSimilarity::Euclidean, dimensions: 128, Precision::F32, Clustering::Auto, Quantization::None, recall@10=95% -> Nprobe(11)\nsift1m, VectorSimilarity::Euclidean, dimensions: 128, Precision::F32, Clustering::Auto, Quantization::None, recall@10=99% -> Nprobe(22)",
+            "required": [
+              "Nprobe"
+            ],
+            "properties": {
+              "Nprobe": {
+                "type": "integer",
+                "description": "Search only in the clusters with the highest similarity scores to the query vector.\nThe number of clusters to search is specified by the n-probe parameter.\nYou cannot directly set a specific, guaranteed recall number (e.g., \"always give me 95% recall@10\"). There is no one-fits-all, there is no automatism.\nInstead, you manually tune parameters that control the tradeoff between query latency and accuracy.\nBecause recall depends heavily on the structure of your specific data (distribution, dimensionality, and clustering) and queries,\nthere is always a trial-and-error (benchmarking) phase required to determine the right settings for your data.\nExamples:\nwikipedia, VectorSimilarity::Dot, dimensions: 64, Precision::F32, Clustering::Auto, Clustering::I8, recall@10=95% -> Nprobe(55)\nwikipedia, VectorSimilarity::Dot, dimensions: 64, Precision::F32, Clustering::Auto, Clustering::I8, recall@10=99% -> Nprobe(140)\nsift1m, VectorSimilarity::Euclidean, dimensions: 128, Precision::F32, Clustering::Auto, Quantization::None, recall@10=95% -> Nprobe(11)\nsift1m, VectorSimilarity::Euclidean, dimensions: 128, Precision::F32, Clustering::Auto, Quantization::None, recall@10=99% -> Nprobe(22)",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Search only in clusters with similarity scores to the query vector above the specified threshold.\nFor dot product similarity, the similarity threshold should be between 0.0 and 1.0, where higher values indicate higher similarity (identical=1.0).\nFor Euclidean distance similarity, the similarity threshold should be between 0.0 and infinity, where lower values indicate higher similarity (identical=0.0).",
+            "required": [
+              "Similaritythreshold"
+            ],
+            "properties": {
+              "Similaritythreshold": {
+                "type": "number",
+                "format": "float",
+                "description": "Search only in clusters with similarity scores to the query vector above the specified threshold.\nFor dot product similarity, the similarity threshold should be between 0.0 and 1.0, where higher values indicate higher similarity (identical=1.0).\nFor Euclidean distance similarity, the similarity threshold should be between 0.0 and infinity, where lower values indicate higher similarity (identical=0.0)."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Search only in the clusters with the highest similarity scores to the query vector, but only if their similarity scores are above the specified threshold, and up to the number of clusters specified by the n-probe parameter.\nFor dot product similarity, the similarity threshold should be between 0.0 and 1.0, where higher values indicate higher similarity (identical=1.0).\nFor Euclidean distance similarity, the similarity threshold should be between 0.0 and infinity, where lower values indicate higher similarity (identical=0.0).",
+            "required": [
+              "NprobeSimilaritythreshold"
+            ],
+            "properties": {
+              "NprobeSimilaritythreshold": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                },
+                "description": "Search only in the clusters with the highest similarity scores to the query vector, but only if their similarity scores are above the specified threshold, and up to the number of clusters specified by the n-probe parameter.\nFor dot product similarity, the similarity threshold should be between 0.0 and 1.0, where higher values indicate higher similarity (identical=1.0).\nFor Euclidean distance similarity, the similarity threshold should be between 0.0 and infinity, where lower values indicate higher similarity (identical=0.0).",
+                "maxItems": 2,
+                "minItems": 2
+              }
+            }
+          }
+        ],
+        "description": "Specifies in which cluster to search for ANN results."
+      },
+      "Clustering": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Exhaustive vector search, no clustering/ANN.",
+            "enum": [
+              "None"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "The number of clusters is automatically determined depending on the number of vectors per level and shard.",
+            "enum": [
+              "Auto"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "Set the number of clusters to a fixed value per level and shard.",
+            "required": [
+              "Fixed"
+            ],
+            "properties": {
+              "Fixed": {
+                "type": "integer",
+                "description": "Set the number of clusters to a fixed value per level and shard.",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "Clustering defines the clustering behavior for approximate nearest neighbor (ANN) search: None, Auto, Fixed(usize)."
+      },
       "DistanceField": {
         "type": "object",
         "description": "DistanceField defines a field for proximity search.",
@@ -2571,30 +2671,30 @@
             "example": {
               "title": {
                 "field": "title",
-                "stored": true,
-                "indexed": true,
+                "store": true,
+                "index_lexical": true,
                 "field_type": "Text",
                 "boost": 10.0,
                 "field_id": 0
               },
               "body": {
                 "field": "body",
-                "stored": true,
-                "indexed": true,
+                "store": true,
+                "index_lexical": true,
                 "field_type": "Text",
                 "field_id": 1
               },
               "url": {
                 "field": "url",
-                "stored": true,
-                "indexed": false,
+                "store": true,
+                "index_lexical": false,
                 "field_type": "Text",
                 "field_id": 2
               },
               "date": {
                 "field": "date",
-                "stored": true,
-                "indexed": false,
+                "store": true,
+                "index_lexical": false,
                 "field_type": "Timestamp",
                 "facet": true,
                 "field_id": 3
@@ -2646,6 +2746,122 @@
           }
         }
       },
+      "Inference": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Predefined model2vec models, already normalized + dot product = cosine similarity, use the same similarity metric that was used during the training of the embedding model.",
+            "required": [
+              "Model2Vec"
+            ],
+            "properties": {
+              "Model2Vec": {
+                "type": "object",
+                "description": "Predefined model2vec models, already normalized + dot product = cosine similarity, use the same similarity metric that was used during the training of the embedding model.",
+                "required": [
+                  "model",
+                  "chunk_size",
+                  "quantization"
+                ],
+                "properties": {
+                  "model": {
+                    "$ref": "#/components/schemas/Model",
+                    "description": "Predefined model type for embeddings."
+                  },
+                  "chunk_size": {
+                    "type": "integer",
+                    "description": "Chunk size for splitting input text, e.g. 1000 characters. This should be the same chunk size that was used during the training of the embedding model.",
+                    "minimum": 0
+                  },
+                  "quantization": {
+                    "$ref": "#/components/schemas/Quantization",
+                    "description": "Quantization method for embeddings."
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Custom model2vec models, already normalized + dot product = cosine similarity, use the same similarity metric that was used during the training of the embedding model.",
+            "required": [
+              "Model2VecCustom"
+            ],
+            "properties": {
+              "Model2VecCustom": {
+                "type": "object",
+                "description": "Custom model2vec models, already normalized + dot product = cosine similarity, use the same similarity metric that was used during the training of the embedding model.",
+                "required": [
+                  "path",
+                  "chunk_size",
+                  "quantization"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "Model ID from Hugging Face or local path to model directory, e.g. \"minishlab/potion-base-2M\""
+                  },
+                  "chunk_size": {
+                    "type": "integer",
+                    "description": "Chunk size for splitting input text, e.g. 1000 characters. This should be the same chunk size that was used during the training of the embedding model.",
+                    "minimum": 0
+                  },
+                  "quantization": {
+                    "$ref": "#/components/schemas/Quantization",
+                    "description": "Quantization method for embeddings."
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "External inference",
+            "required": [
+              "External"
+            ],
+            "properties": {
+              "External": {
+                "type": "object",
+                "description": "External inference",
+                "required": [
+                  "dimensions",
+                  "precision",
+                  "quantization",
+                  "similarity"
+                ],
+                "properties": {
+                  "dimensions": {
+                    "type": "integer",
+                    "description": "Number of dimensions for the embeddings.",
+                    "minimum": 0
+                  },
+                  "precision": {
+                    "$ref": "#/components/schemas/Precision",
+                    "description": "Data type for embeddings."
+                  },
+                  "quantization": {
+                    "$ref": "#/components/schemas/Quantization",
+                    "description": "Quantization method for embeddings."
+                  },
+                  "similarity": {
+                    "$ref": "#/components/schemas/VectorSimilarity",
+                    "description": "Similarity metric to use for comparing embeddings, e.g. cosine similarity or euclidean distance.\nThis should be the same similarity metric that was used during the training of the embedding model."
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "string",
+            "description": "No inference",
+            "enum": [
+              "None"
+            ]
+          }
+        ],
+        "description": "Inference type, to transform input text into vector embeddings.\nThis can be a predefined model2vec model, a custom model2vec model, an external inference, or no inference."
+      },
       "IteratorResult": {
         "type": "object",
         "description": "Iterator",
@@ -2694,6 +2910,14 @@
           }
         }
       },
+      "LexicalSimilarity": {
+        "type": "string",
+        "description": "Similarity type defines the scoring and ranking of the search results:\n- Bm25f: considers documents composed from several fields, with different field lengths and importance\n- Bm25fProximity: considers term proximity, e.g. for implicit phrase search with improved relevancy",
+        "enum": [
+          "Bm25f",
+          "Bm25fProximity"
+        ]
+      },
       "MinMaxFieldJson": {
         "type": "object",
         "description": "MinMaxFieldJson is a JSON representation of the minimum and maximum value of a field.",
@@ -2709,6 +2933,35 @@
             "description": "maximum value of the field"
           }
         }
+      },
+      "Model": {
+        "type": "string",
+        "description": "Predefined model type for embeddings.",
+        "enum": [
+          "PotionBase32M",
+          "PotionMultilingual128M",
+          "PotionRetrieval32M",
+          "PotionBase8M",
+          "PotionBase4M",
+          "PotionBase2M"
+        ]
+      },
+      "Precision": {
+        "type": "string",
+        "description": "Vector precision",
+        "enum": [
+          "None",
+          "F32",
+          "I8"
+        ]
+      },
+      "Quantization": {
+        "type": "string",
+        "description": "Quantization method for embeddings.",
+        "enum": [
+          "I8",
+          "None"
+        ]
       },
       "QueryCompletion": {
         "type": "object",
@@ -3529,7 +3782,7 @@
                       "type": "integer",
                       "minimum": 0
                     },
-                    "description": "Term length thresholds for each edit distance.\n  None:    max_dictionary_edit_distance for all terms lengths\n  Some(\\[4\\]):    max_dictionary_edit_distance for all terms lengths >= 4,\n  Some(\\[2,8\\]):    max_dictionary_edit_distance for all terms lengths >=2, max_dictionary_edit_distance +1 for all terms for lengths>=8"
+                    "description": "Term length thresholds for each edit distance.\n  None:    max_dictionary_edit_distance for all terms lengths\n  Some(\\[4\\]):    max_dictionary_edit_distance for all terms lengths >= 4,\n  Some(\\[2,8\\])    max_dictionary_edit_distance for all terms lengths >=2, max_dictionary_edit_distance +1 for all terms for lengths>=8"
                   },
                   "complete": {
                     "type": [
@@ -3614,7 +3867,7 @@
       },
       "QueryType": {
         "type": "string",
-        "description": "Specifies the default QueryType: The following query types are supported:\n- **Union** (OR, disjunction),\n- **Intersection** (AND, conjunction),\n- **Phrase** (\"\"),\n- **Not** (-).\n\nThe default QueryType is superseded if the query parser detects that a different query type is specified within the query string (+ - \"\").",
+        "description": "Specifies the default QueryType: The following query types are supported:\n- **Union** (OR, disjunction),\n- **Intersection** (AND, conjunction),\n- **Phrase** (\"\"),\n- **Not** (-).\n\nThe default QueryType is superseded if the query parser detects that a different query type is specified within the query string (+ - \"\").\n",
         "enum": [
           "Union",
           "Intersection",
@@ -3876,8 +4129,8 @@
         "description": "Defines a field in index schema: field, stored, indexed , field_type, facet, boost.",
         "required": [
           "field",
-          "stored",
-          "indexed",
+          "store",
+          "index_lexical",
           "field_type"
         ],
         "properties": {
@@ -3885,11 +4138,15 @@
             "type": "string",
             "description": "unique name of a field"
           },
-          "stored": {
+          "store": {
             "type": "boolean",
             "description": "only stored fields are returned in the search results"
           },
-          "indexed": {
+          "index_lexical": {
+            "type": "boolean",
+            "description": "only indexed fields can be searched"
+          },
+          "index_vector": {
             "type": "boolean",
             "description": "only indexed fields can be searched"
           },
@@ -3920,6 +4177,78 @@
           }
         }
       },
+      "SearchMode": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Lexical search mode: Search results are retrieved based on exact matches of query terms with the indexed terms.",
+            "enum": [
+              "Lexical"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "Vector search mode: Search results are retrieved based on the similarity of query vectors with the indexed vectors.",
+            "required": [
+              "Vector"
+            ],
+            "properties": {
+              "Vector": {
+                "type": "object",
+                "description": "Vector search mode: Search results are retrieved based on the similarity of query vectors with the indexed vectors.",
+                "required": [
+                  "ann_mode"
+                ],
+                "properties": {
+                  "similarity_threshold": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "description": "Include only vectors with similarity scores above the specified threshold\nFor dot product similarity, the similarity threshold should be between 0.0 and 1.0, where higher values indicate higher similarity (identical=1.0).\nFor Euclidean distance similarity, the similarity threshold should be between 0.0 and infinity, where lower values indicate higher similarity (identical=0.0)."
+                  },
+                  "ann_mode": {
+                    "$ref": "#/components/schemas/AnnMode",
+                    "description": "Specifies in which clusters to search for ANN results."
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Hybrid search mode: Search results are retrieved based on a combination of lexical and vector search.\nThe relevance score of search results is calculated based on RRF (Reciprocal Rank Fusion) of the result positions in lexical and vector search.",
+            "required": [
+              "Hybrid"
+            ],
+            "properties": {
+              "Hybrid": {
+                "type": "object",
+                "description": "Hybrid search mode: Search results are retrieved based on a combination of lexical and vector search.\nThe relevance score of search results is calculated based on RRF (Reciprocal Rank Fusion) of the result positions in lexical and vector search.",
+                "required": [
+                  "ann_mode"
+                ],
+                "properties": {
+                  "similarity_threshold": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "description": "optional threshold to filter out low similarity scores\nFor dot product similarity, the similarity threshold should be between 0.0 and 1.0, where higher values indicate higher similarity (identical=1.0).\nFor Euclidean distance similarity, the similarity threshold should be between 0.0 and infinity, where lower values indicate higher similarity (identical=0.0)."
+                  },
+                  "ann_mode": {
+                    "$ref": "#/components/schemas/AnnMode",
+                    "description": "Specifies in which clusters to search for ANN results."
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "description": "Specifies the default QueryMode: The following query modes are supported:"
+      },
       "SearchRequestObject": {
         "type": "object",
         "description": "Search request object",
@@ -3930,6 +4259,9 @@
           "query": {
             "type": "string",
             "description": "Query string, search operators + - \"\" are recognized."
+          },
+          "query_vector": {
+            "description": "Optional query vector: If None, then the query vector is derived from the query string using the specified model. If Some, then the query vector is used for semantic search and the query string is only used for lexical search and highlighting."
           },
           "enable_empty_query": {
             "type": "boolean",
@@ -4017,6 +4349,9 @@
           },
           "query_rewriting": {
             "$ref": "#/components/schemas/QueryRewriting"
+          },
+          "search_mode": {
+            "$ref": "#/components/schemas/SearchMode"
           }
         }
       },
@@ -4119,14 +4454,6 @@
           }
         }
       },
-      "SimilarityType": {
-        "type": "string",
-        "description": "Similarity type defines the scoring and ranking of the search results:\n- Bm25f: considers documents composed from several fields, with different field lengths and importance\n- Bm25fProximity: considers term proximity, e.g. for implicit phrase search with improved relevancy",
-        "enum": [
-          "Bm25f",
-          "Bm25fProximity"
-        ]
-      },
       "SortOrder": {
         "type": "string",
         "description": "Specifies the sort order for the search results.",
@@ -4178,23 +4505,43 @@
         "enum": [
           "None",
           "Arabic",
+          "Armenian",
+          "Basque",
+          "Catalan",
+          "Czech",
           "Danish",
           "Dutch",
+          "DutchPorter",
           "English",
+          "Esperanto",
+          "Estonian",
           "Finnish",
           "French",
           "German",
           "Greek",
+          "Hindi",
           "Hungarian",
+          "Indonesian",
+          "Irish",
           "Italian",
+          "Lithuanian",
+          "Lovins",
+          "Nepali",
           "Norwegian",
+          "Persian",
+          "Polish",
+          "Porter",
           "Portuguese",
           "Romanian",
           "Russian",
+          "Serbian",
+          "Sesotho",
           "Spanish",
           "Swedish",
           "Tamil",
-          "Turkish"
+          "Turkish",
+          "Ukrainian",
+          "Yiddish"
         ]
       },
       "StopwordType": {
@@ -4300,6 +4647,15 @@
           "type": "number",
           "format": "double"
         }
+      },
+      "VectorSimilarity": {
+        "type": "string",
+        "description": "Similarity measure for comparing vector embeddings.",
+        "enum": [
+          "Cosine",
+          "Dot",
+          "Euclidean"
+        ]
       }
     }
   },
