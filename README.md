@@ -30,7 +30,7 @@ Blog Posts: [SeekStorm is now Open Source](https://seekstorm.com/blog/sneak-peek
 
 ### SeekStorm high-performance search library
 
-Hybrid search
+#### Hybrid search
 * Internally, SeekStorm uses [**two separate, first-class, native index architectures**](ARCHITECTURE.md#architecture) for **vector search** and **keyword search**. Two native cores, not just a retrofit, add-on layer.
 * SeekStorm doesn’t try to make one index do everything. It runs two native search engines and lets the query planner decide how to combine them.
 * Two native index architectures under one roof:
@@ -46,7 +46,7 @@ Hybrid search
 * The user is fully shielded from the complexity as if it was only a single index.
 * Enables pure lexical, pure vector or hybrid search (exhaustive, not only re-ranking of preliminary candidates). 
 
-Architecture
+#### Architecture
 * *Fast* sharded indexing: 35K docs/sec = 3 billion docs/day on a laptop.
 * *Fast* sharded search: [7x faster query latency, 17x faster tail latency (P99)](#benchmarks) for lexical search.
 * Billion-scale index
@@ -57,7 +57,7 @@ Architecture
 * Single-machine scalability: serving thousands of concurrent queries with low latency from a single commodity server without needing clusters or proprietary hardware accelerators.
 * 100% human 😎 craftsmanship - No AI 🤖 was forced into vibe coding/AI slop.
 
-Vector Features
+#### Vector Features
 * **Multi-Vector indexing**: both from multiple fields and from multiple chunks per field.
 * **Integrated inference**: Generate and index embeddings from any text document field.
 * Alternatively, import and index externally generated embeddings.
@@ -70,7 +70,7 @@ Vector Features
 * **Approximate Nearest Neighbor Search** (ANNS) in an **Leveled IVF index**.
 * All **field filters** are directly active **during vector search**, not just as post-search filtering step.
 
-Lexical Features
+#### Lexical Features
 * **BM25F** and **BM25F_Proximity** ranking
 * 6 tokenizers, including **Chinese word segmentation**.
 * **Stemming** for 38 languages.
@@ -81,7 +81,7 @@ Lexical Features
 * **N-gram indexing**
 * **Block-max WAND** and **Maxscore** acceleration
 
-General Features
+#### General Features
 * **True real-time search**, both for **vector search** and **lexical search**, with negligible performance impact
 * Incremental indexing
 * Unlimited field number, field length & index size
@@ -94,12 +94,11 @@ General Features
 * Search with empty query, but query facets, facet filter, and result sort parameters, ascending and descending.
 * Typo tolerance / Fuzzy queries / Query spelling correction: return results if the query contains spelling errors.
 * Typo-tolerant Query Auto-Completion (QAC) and Instant search.
-
 * KWIC snippets, highlighting
 * One-way and multi-way synonyms
 * Language independent
 
-Field types
+#### Field types
 + U8..U64 
 + I8..I64 
 + F32, F64 
@@ -113,13 +112,13 @@ Field types
 + Binary (embedded images, audio, video, pdf)
 + Vector (**externally generated embeddings**)
 
-Query types
+#### Query types
 + OR  disjunction  union
 + AND conjunction intersection
 + ""  phrase
 + \-   NOT
 
-Result types
+#### Result types
 + TopK
 + Count
 + TopKCount
@@ -1645,6 +1644,9 @@ ingest
 ```
 
 This creates the demo index  and indexes the local wikipedia file.
+
+<img src="assets/server_info.png" width="800" alt="server info">
+<br>
 
 **Start searching within the embedded WebUI**
 
