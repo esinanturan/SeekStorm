@@ -33,13 +33,11 @@ Blog Posts: [SeekStorm is now Open Source](https://seekstorm.com/blog/sneak-peek
 #### Hybrid search
 * Internally, SeekStorm uses [**two separate, first-class, native index architectures**](ARCHITECTURE.md#architecture) for **vector search** and **keyword search**. Two native cores, not just a retrofit, add-on layer.
 * SeekStorm doesn’t try to make one index do everything. It runs two native search engines and lets the query planner decide how to combine them.
-* Two native index architectures under one roof:
-  - Lexical search: an inverted index optimized for lexical relevance, 
-  - Vector search: an ANN index optimized for vector similarity.
+* Two **native** index architectures under one roof:
+  - **Lexical search**: an inverted index optimized for lexical relevance, 
+  - **Vector search**: an ANN index optimized for vector similarity.
 * Both are first-class engines, integrated at the query planner level.
   - Query planner with multiple QueryModes and FusionTypes
-  - Query planner mode can be automatically or manually selected.
-  - Active QueryModes mode is returned for explainability, relatability and credibility.
   - **Per query choice** of lexical search, **vector search**, or **hybrid search**.
 * Separate storage layouts, separate indexing pipelines, separate execution paths, unified query planner and result fusion (Reciprocal Rank Fusion - RRF).
 * Two independent scorers, two independent top-k candidates: late fusion with intent, not score soup, no score normalization hell.
