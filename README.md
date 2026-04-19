@@ -11,7 +11,7 @@
   <a href="https://seekstorm.github.io/search-benchmark-game/">Benchmark</a> | 
   <a href="https://deephn.org/">Demo</a> | 
   <a href="#documentation">Library Docs</a> | 
-  <a href="https://seekstorm.apidocumentation.com/reference">Server Docs</a> |
+  <a href="https://seekstorm.github.io/documentation/">Server Docs</a> |
   <a href="https://github.com/SeekStorm/SeekStorm/blob/main/src/seekstorm_server/README.md">Server Readme</a> |
   <a href="#roadmap">Roadmap</a> | 
   <a href="https://seekstorm.com/blog/">Blog</a> | 
@@ -130,7 +130,7 @@ Blog Posts: [SeekStorm is now Open Source](https://seekstorm.com/blog/sneak-peek
 * API-key management.
 * [Embedded web server and web UI](https://github.com/SeekStorm/SeekStorm/blob/main/src/seekstorm_server#open-embedded-web-ui-in-browser) to search and display results from any index without coding.
 * Web UI with query auto correction, query auto-completion, instant search, keyword highlighting, histogram, date filter, faceting, result sorting, document preview (as demo, for testing, as template).
-* Code first OpenAPI generated [REST API documentation](https://seekstorm.apidocumentation.com/reference)
+* Code first OpenAPI generated [REST API documentation](https://seekstorm.github.io/documentation/)
 * Cross-platform: runs on Linux, Windows, and macOS (other OS untested).
 * Docker file and container image at [Docker Hub](https://hub.docker.com/r/wolfgarbe/seekstorm_server)
 
