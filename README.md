@@ -164,6 +164,8 @@ True real-time search, as opposed to NRT: every indexed document is immediately 
 
 ## Benchmarks
 
+### Lexical Search
+
 <img src="assets/search_benchmark_game1.png" width="800" alt="Benchmark">
 <br>
 <br>
@@ -193,6 +195,18 @@ https://seekstorm.github.io/search-benchmark-game/
 https://github.com/SeekStorm/search-benchmark-game/
 
 See our **blog posts** for more detailed information: [SeekStorm is now Open Source](https://seekstorm.com/blog/sneak-peek-seekstorm-rust/) and [SeekStorm gets Faceted search, Geo proximity search, Result sorting](https://seekstorm.com/blog/faceted_search-geo-proximity-search/)
+
+### Vector search
+
+<img src="assets/vector_search_benchmark.png" width="800" alt="Benchmark">
+<br>
+<br>
+
+- 1 million vectors, 128 dimensions, f32 precision  
+- nprobe=16 -> recall@10=95%, average latency=188 microseconds  
+- nprobe=33 -> recall@10=99%, average latency=302 microseconds  
+
+[SIFT1M dataset](http://corpus-texmex.irisa.fr/)
 
 ### Why latency matters
 
@@ -1391,9 +1405,11 @@ query documents/vectors
 
 ### Vector search: SIFT1M dataset
 
-- 1 million vectors, 128 dimensions, f32 precision
-- nprobe=16 -> recall@10=95%, average latency=0.18 milliseconds 
-- nprobe=33 -> recall@10=99%, average latency=0.30 milliseconds 
+- 1 million vectors, 128 dimensions, f32 precision  
+- nprobe=16 -> recall@10=95%, average latency=188 microseconds  
+- nprobe=33 -> recall@10=99%, average latency=302 microseconds  
+
+[SIFT1M dataset](http://corpus-texmex.irisa.fr/)
 
 create index
 ```rust ,no_run
