@@ -7,6 +7,9 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 WORKDIR /seekstorm
 
+# Install C/C++ compiler
+RUN apt-get update && apt-get install -y g++
+
 COPY . /seekstorm
 
 RUN cargo build --release
