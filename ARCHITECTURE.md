@@ -17,9 +17,8 @@ Index size and latency grow linearly with the number of indexed documents, while
   - Query planner with 6 dedicated QueryModes and FusionTypes
   - Query planner mode can be automatically or manually selected.
   - Active QueryModes mode is returned for explainability, relatability and credibility.
-* Separate storage layouts, separate indexing pipelines, separate execution paths, unified query planner and result fusion (Reciprocal Rank Fusion - RRF).
-* Two independent scorers, two independent top-k candidates: late fusion with intent, not score soup, no score normalization hell.
-* The user is fully shielded from the complexity as if it was only a single index.
+* Separate internal index, storage layouts, indexing, search, scoring, top-k candidates - unified query planner and result fusion (Reciprocal Rank Fusion - RRF).
+* But the user is fully shielded from the complexity, as if it was only a single index.
 * Enables pure lexical, pure vector or hybrid search (exhaustive, not only re-ranking of preliminary candidates). 
 
 </br>
