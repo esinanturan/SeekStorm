@@ -207,6 +207,8 @@ See our **blog posts** for more detailed information: [SeekStorm is now Open Sou
 
 [SIFT1M dataset](http://corpus-texmex.irisa.fr/)
 
+[Benchmark code](#vector-search-sift1m-dataset)
+
 ### Why latency matters
 
 * Search speed might be good enough for a single search. Below 10 ms people can't tell latency anymore. Search latency might be small compared to internet network latency.
