@@ -121,7 +121,7 @@ The embedded Web UI is intended for demonstration, test and debugging rather tha
 
 ## REST API endpoints
 
-See full [documentation of the REST API](https://seekstorm.apidocumentation.com/reference).
+See full [documentation of the REST API](https://seekstorm.github.io/documentation).
 
 You can use a REST client like [Bruno](https://www.usebruno.com/) or the VSC extension [Rest client](https://marketplace.visualstudio.com/items?itemName=humao.rest-client) to execute API calls, inspect responses and generate code snippets in your language:  
 [**interactive API endpoint examples**](https://github.com/SeekStorm/SeekStorm/blob/master/src/seekstorm_server/test_api.rest)
