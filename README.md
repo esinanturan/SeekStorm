@@ -209,6 +209,23 @@ See our **blog posts** for more detailed information: [SeekStorm is now Open Sou
 
 [Benchmark code](#vector-search-sift1m-dataset)
 
+### Benchmark vector search vs. lexical search (Wikipedia)
+
+There are benchmarks of vector search engines, and benchmarks of lexical search engines.  
+But seeing the latency of lexical search and vector search stacked up against each other might offer some unique insight.
+
+<img src="assets/vector_lexical_benchmark.png" width="800" alt="Benchmark">
+<br>
+<br>
+
+**English Wikipedia**: 5 million documents, 16 million vectors  
+Lexical: 2 fields, top10, BM25, average latency	305 microseconds  
+Vector: 2 fields, nprobe=68 -> recall@10=95%, average latency 2,700 microseconds  
+Vector: 2 fields, nprobe=200 -> recall@10=99%, average latency 6,370 microseconds  
+Using [Model2Vec from MinishLab](https://github.com/MinishLab/model2vec-rs): PotionBase2M, chunks: 1000 byte 
+
+We are using the **English Wikipedia** data (*5 million entries*) and queries (*300 intersection queries*) derived from the **AOL query dataset**, both from [Tantivy’s search-benchmark-game](https://github.com/quickwit-oss/search-benchmark-game/).
+
 ### Why latency matters
 
 * Search speed might be good enough for a single search. Below 10 ms people can't tell latency anymore. Search latency might be small compared to internet network latency.
@@ -235,6 +252,12 @@ It is a component, to be used together with other components.
 There are use cases which can be solved better today with vector search and LLMs, but for many more keyword search is still the best solution.
 Keyword search is exact, lossless, and it is very fast, with better scaling, better latency, lower cost and energy consumption.
 Vector search works with semantic similarity, returning results within a given proximity and probability. 
+
+### Why hybrid search?
+
+Because lexical search and vector search **complement each other**. We can significantly **improve result quality** with hybrid search by combining their strengths, while compensating their shortcomings.  
+* **Lexical search** is fast, precise, exact, and language independent - but unable to deal with meaning and semantic similarity.  
+* **Vector search** understands similarities - but is language dependent, can't deal with new or rare terms it wasn't trained for, it is slower and more expensive.
 
 ### Keyword search (lexical search)
 If you search for exact results like proper names, numbers, license plates, domain names, and phrases (e.g. plagiarism detection) then keyword search is your friend. Vector search, on the other hand, will bury the exact result that you are looking for among a myriad of results that are only somehow semantically related. At the same time, if you don’t know the exact terms, or you are interested in a broader topic, meaning or synonym, no matter what exact terms are used, then keyword search will fail you.
