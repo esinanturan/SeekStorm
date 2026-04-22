@@ -64,12 +64,11 @@ pub enum Embedding {
 #[derive(Pod, Zeroable, Clone, Copy)]
 pub(crate) struct VectorHeader {
     pub doc_id: u16,
-    pub padding: u16,
     pub field_id: u32,
     pub chunk_id: u32,
     pub scale: f32,
     pub norm: i32,
-    pub zero_point: i32,
+    pub zero_point: i16,
     pub sum_q: i32,
 }
 
@@ -885,7 +884,6 @@ impl Shard {
 
             let header = VectorHeader {
                 doc_id: record.doc_id,
-                padding: 0,
                 field_id: record.field_id,
                 chunk_id: record.chunk_id,
                 scale: record.scale,
@@ -911,7 +909,7 @@ impl Shard {
 pub(crate) trait SearchVectorShard {
     async fn search_vector_shard(
         &self,
-        query_vector: Option<(Embedding, f32, i32, i32, i32)>,
+        query_vector: Option<(Embedding, f32, i32, i16, i32)>,
         length: usize,
         include_uncommitted: bool,
         similarity_threshold: Option<f32>,
@@ -940,7 +938,7 @@ impl Shard {
         query_embedding: &Embedding,
         scale: f32,
         norm: i32,
-        zero_point: i32,
+        zero_point: i16,
         sum_q: i32,
         vector_similarity: &VectorSimilarity,
         field_filter_set: &AHashSet<u16>,
@@ -1000,7 +998,7 @@ impl Shard {
 impl SearchVectorShard for ShardArc {
     async fn search_vector_shard(
         &self,
-        query_vector: Option<(Embedding, f32, i32, i32, i32)>,
+        query_vector: Option<(Embedding, f32, i32, i16, i32)>,
         length: usize,
         include_uncommitted: bool,
         similarity_threshold: Option<f32>,

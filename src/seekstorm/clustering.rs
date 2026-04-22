@@ -47,7 +47,7 @@ pub(crate) struct ParentMedoid {
     pub embedding: Embedding,
     pub scale: f32,
     pub norm: i32,
-    pub zero_point: i32,
+    pub zero_point: i16,
     pub sum_q: i32,
 }
 

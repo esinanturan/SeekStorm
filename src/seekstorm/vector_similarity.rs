@@ -120,7 +120,7 @@ unsafe fn horizontal_sum_avx2(v: __m256) -> f32 {
 pub(crate) fn similarity_embedding_view(
     a: &Embedding,
     b: &EmbeddingView,
-    scale_norm: Option<(f32, i32, i32, i32, f32, i32, i32, i32)>,
+    scale_norm: Option<(f32, i32, i16, i32, f32, i32, i16, i32)>,
     vector_similarity: VectorSimilarity,
 ) -> f32 {
     match (a, vector_similarity) {
@@ -213,7 +213,7 @@ pub(crate) fn similarity_embedding_view(
 pub(crate) fn similarity_embedding(
     a: &Embedding,
     b: &Embedding,
-    scale_norm: Option<(f32, i32, i32, i32, f32, i32, i32, i32)>,
+    scale_norm: Option<(f32, i32, i16, i32, f32, i32, i16, i32)>,
     vector_similarity: VectorSimilarity,
 ) -> f32 {
     match (a, vector_similarity) {
@@ -306,7 +306,7 @@ pub(crate) fn similarity_embedding(
 pub(crate) unsafe fn similarity_avx2_embedding_view(
     query: &QuerySimd,
     emb: &EmbeddingView,
-    scale_norm: Option<(f32, i32, i32, i32, f32, i32, i32, i32)>,
+    scale_norm: Option<(f32, i32, i16, i32, f32, i32, i16, i32)>,
     vector_similarity: VectorSimilarity,
 ) -> f32 {
     unsafe {
@@ -369,7 +369,7 @@ pub(crate) unsafe fn similarity_avx2_embedding_view(
 pub(crate) unsafe fn similarity_avx2_embedding(
     query: &QuerySimd,
     emb: &Embedding,
-    scale_norm: Option<(f32, i32, i32, i32, f32, i32, i32, i32)>,
+    scale_norm: Option<(f32, i32, i16, i32, f32, i32, i16, i32)>,
     vector_similarity: VectorSimilarity,
 ) -> f32 {
     unsafe {
@@ -678,7 +678,7 @@ pub(crate) struct QuantizedVector {
     pub(crate) data: Vec<i8>,
     pub(crate) scale: f32,
     pub(crate) norm: i32,
-    pub(crate) zero_point: i32,
+    pub(crate) zero_point: i16,
     pub(crate) sum_q: i32,
 }
 
@@ -744,11 +744,11 @@ impl QuantizedVector {
         let range = ((((max_val - min_val) as i64) as u64).next_power_of_two() - 1) as f32;
         let scale = range / 255.0;
         let zero_point_f = -128.0 - (min_val / scale);
-        let zero_point = zero_point_f.round().clamp(-128.0, 127.0) as i32;
+        let zero_point = zero_point_f.round().clamp(-128.0, 127.0) as i16;
 
         let data: Vec<i8> = values
             .iter()
-            .map(|&x| ((x / scale).round() as i32 + zero_point).clamp(-128, 127) as i8)
+            .map(|&x| ((x / scale).round() as i32 + zero_point as i32).clamp(-128, 127) as i8)
             .collect();
 
         let squared_norm = data.iter().map(|&x| x as i32 * x as i32).sum();
@@ -789,7 +789,7 @@ impl QuantizedVector {
             let range = ((((max_val - min_val) as i64) as u64).next_power_of_two() - 1) as f32;
             let scale = range / 255.0;
             let zero_point_f = -128.0 - (min_val / scale);
-            let zero_point = zero_point_f.round().clamp(-128.0, 127.0) as i32;
+            let zero_point = zero_point_f.round().clamp(-128.0, 127.0) as i16;
 
             let data = Self::quantize_affine_avx2(values, scale, zero_point);
 
@@ -963,13 +963,13 @@ impl QuantizedVector {
     pub(crate) unsafe fn quantize_affine_avx2(
         values: &[f32],
         scale: f32,
-        zero_point: i32,
+        zero_point: i16,
     ) -> Vec<i8> {
         unsafe {
             let inv_scale = 1.0 / scale;
 
             let scale_vec = _mm256_set1_ps(inv_scale);
-            let zp_vec = _mm256_set1_epi32(zero_point);
+            let zp_vec = _mm256_set1_epi32(zero_point as i32);
 
             let min_i32 = _mm256_set1_epi32(-128);
             let max_i32 = _mm256_set1_epi32(127);
@@ -1011,7 +1011,7 @@ impl QuantizedVector {
             }
 
             for j in i..values.len() {
-                let q = ((values[j] * inv_scale).round() as i32 + zero_point).clamp(-128, 127);
+                let q = ((values[j] * inv_scale).round() as i32 + zero_point as i32).clamp(-128, 127);
                 result[j] = q as i8;
             }
 
@@ -1111,12 +1111,12 @@ pub(crate) fn euclidean_i8_quantized_affine(
     v1: &[i8],
     scale1: f32,
     norm1: i32,
-    zero_point1: i32,
+    zero_point1: i16,
     sum_q1: i32,
     v2: &[i8],
     scale2: f32,
     norm2: i32,
-    zero_point2: i32,
+    zero_point2: i16,
     sum_q2: i32,
 ) -> f32 {
     let dot_i32: i32 = v1.iter().zip(v2).map(|(&a, &b)| a as i32 * b as i32).sum();
@@ -1124,11 +1124,11 @@ pub(crate) fn euclidean_i8_quantized_affine(
     let n = v1.len() as i32;
 
     let dot_i32 =
-        dot_i32 - zero_point2 * sum_q1 - zero_point1 * sum_q2 + n * zero_point1 * zero_point2;
+        dot_i32 - zero_point2 as i32 * sum_q1 - zero_point1 as i32 * sum_q2 + n * zero_point1 as i32 * zero_point2 as i32;
 
-    let norm1 = norm1 - 2 * zero_point1 * sum_q1 + n * zero_point1 * zero_point1;
+    let norm1 = norm1 - 2 * zero_point1 as i32 * sum_q1 + n * zero_point1 as i32 * zero_point1 as i32;
 
-    let norm2 = norm2 - 2 * zero_point2 * sum_q2 + n * zero_point2 * zero_point2;
+    let norm2 = norm2 - 2 * zero_point2 as i32 * sum_q2 + n * zero_point2 as i32 * zero_point2 as i32;
 
     let dot = dot_i32 as f32 * scale1 * scale2;
 
@@ -1142,12 +1142,12 @@ pub(crate) fn euclidean_i8_quantized_affine_avx2(
     v1: &QuerySimd,
     scale1: f32,
     norm1: i32,
-    zero_point1: i32,
+    zero_point1: i16,
     sum_q1: i32,
     v2: &[i8],
     scale2: f32,
     norm2: i32,
-    zero_point2: i32,
+    zero_point2: i16,
     sum_q2: i32,
 ) -> f32 {
     let dot_i32: i32 = unsafe { dot_i8_avx2(v1, v2) };
@@ -1155,11 +1155,11 @@ pub(crate) fn euclidean_i8_quantized_affine_avx2(
     let n = v2.len() as i32;
 
     let dot_i32 =
-        dot_i32 - zero_point2 * sum_q1 - zero_point1 * sum_q2 + n * zero_point1 * zero_point2;
+        dot_i32 - zero_point2 as i32 * sum_q1 - zero_point1 as i32 * sum_q2 + n * zero_point1 as i32 * zero_point2 as i32;
 
-    let norm1 = norm1 - 2 * zero_point1 * sum_q1 + n * zero_point1 * zero_point1;
+    let norm1 = norm1 - 2 * zero_point1 as i32 * sum_q1 + n * zero_point1 as i32 * zero_point1 as i32;
 
-    let norm2 = norm2 - 2 * zero_point2 * sum_q2 + n * zero_point2 * zero_point2;
+    let norm2 = norm2 - 2 * zero_point2 as i32 * sum_q2 + n * zero_point2 as i32 * zero_point2 as i32;
 
     let dot = dot_i32 as f32 * scale1 * scale2;
 

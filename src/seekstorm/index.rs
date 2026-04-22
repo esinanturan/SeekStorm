@@ -3621,8 +3621,6 @@ pub static IS_AVX2: LazyLock<bool> = LazyLock::new(|| {
 
 #[cfg(not(all(target_feature = "aes", target_feature = "sse2", feature = "gx")))]
 use ahash::RandomState;
-#[cfg(not(all(target_feature = "aes", target_feature = "sse2", feature = "gx")))]
-use std::sync::LazyLock;
 
 #[cfg(not(all(target_feature = "aes", target_feature = "sse2", feature = "gx")))]
 pub static HASHER_32: LazyLock<RandomState> =
