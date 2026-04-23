@@ -1,6 +1,6 @@
 [package]
 name = "seekstorm"
-version = "3.0.1"
+version = "3.0.2"
 authors = ["Wolf Garbe <wolf.garbe@seekstorm.com>"]
 license = "Apache-2.0"
 categories = ["database-implementations", "data-structures"]
@@ -15,7 +15,7 @@ exclude = ["assets/*.png","assets/*.jpg"]
 
 [features]
 # comment out the default features below you don't need: zh=Chinese word segmentation, pdf=PDF text extraction, gx=GXHash instead of AHash for faster hash computation. 
-# You can also disable all default features and re-enable them case-wise in your toml with: seekstorm = { version = "2.3.0", default-features = false, features = ["zh","pdf"] }
+# You can also disable all default features and re-enable them case-wise in your toml with: seekstorm = { version = "3.0.2", default-features = false, features = ["zh","pdf"] }
 default = ["zh","pdf","gx","vb"]
 zh = []
 pdf = ["pdfium-render"]

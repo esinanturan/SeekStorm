@@ -5,12 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.1] - 2026-04-20
+## [3.0.2] - 2026-04-23
+
+### Added
+
+- New vector search example (external vectors and vector query via REST API, Euclidean with I8 quantization) added to test_api.rest.
+
+### Fixed
+
+- I8 quantization for Euclidean distance fixed for range below 1.0.
+
+## [3.0.1] - 2026-04-22
 
 ### Changed
 
 - VectorHeader.zero_point changed from i32 to i16
 - VectorHeader.padding: u16 removed
+
+### Fixed
+
 - index: removed duplicate use std::sync::LazyLock;
 
 ## [3.0.0] - 2026-04-19

@@ -734,14 +734,13 @@ impl QuantizedVector {
         }
 
         if max_val > *max_vector_value {
-            let max_val_power_of_two =
-                ((((max_val - min_val) as i64) as u64).next_power_of_two() - 1) as f32;
+            let max_val_power_of_two = Self::raster_range(max_val - min_val);
             *max_vector_value = max_val_power_of_two;
         } else {
             max_val = *max_vector_value;
         }
 
-        let range = ((((max_val - min_val) as i64) as u64).next_power_of_two() - 1) as f32;
+        let range = Self::raster_range(max_val - min_val);
         let scale = range / 255.0;
         let zero_point_f = -128.0 - (min_val / scale);
         let zero_point = zero_point_f.round().clamp(-128.0, 127.0) as i16;
@@ -763,6 +762,14 @@ impl QuantizedVector {
         }
     }
 
+    pub(crate) fn raster_range(range: f32) -> f32 {
+        if range > 1.0 {
+            (((range as i64) as u64 + 1).next_power_of_two() - 1) as f32
+        } else {
+            range
+        }
+    }
+
     pub(crate) fn new_scale_norm_affine_avx2(
         min_vector_value: &mut f32,
         max_vector_value: &mut f32,
@@ -779,14 +786,13 @@ impl QuantizedVector {
             }
 
             if max_val > *max_vector_value {
-                let max_val_power_of_two =
-                    ((((max_val - min_val) as i64) as u64).next_power_of_two() - 1) as f32;
+                let max_val_power_of_two = Self::raster_range(max_val - min_val);
                 *max_vector_value = max_val_power_of_two;
             } else {
                 max_val = *max_vector_value;
             }
 
-            let range = ((((max_val - min_val) as i64) as u64).next_power_of_two() - 1) as f32;
+            let range = Self::raster_range(max_val - min_val);
             let scale = range / 255.0;
             let zero_point_f = -128.0 - (min_val / scale);
             let zero_point = zero_point_f.round().clamp(-128.0, 127.0) as i16;
@@ -1011,7 +1017,8 @@ impl QuantizedVector {
             }
 
             for j in i..values.len() {
-                let q = ((values[j] * inv_scale).round() as i32 + zero_point as i32).clamp(-128, 127);
+                let q =
+                    ((values[j] * inv_scale).round() as i32 + zero_point as i32).clamp(-128, 127);
                 result[j] = q as i8;
             }
 
@@ -1123,12 +1130,14 @@ pub(crate) fn euclidean_i8_quantized_affine(
 
     let n = v1.len() as i32;
 
-    let dot_i32 =
-        dot_i32 - zero_point2 as i32 * sum_q1 - zero_point1 as i32 * sum_q2 + n * zero_point1 as i32 * zero_point2 as i32;
+    let dot_i32 = dot_i32 - zero_point2 as i32 * sum_q1 - zero_point1 as i32 * sum_q2
+        + n * zero_point1 as i32 * zero_point2 as i32;
 
-    let norm1 = norm1 - 2 * zero_point1 as i32 * sum_q1 + n * zero_point1 as i32 * zero_point1 as i32;
+    let norm1 =
+        norm1 - 2 * zero_point1 as i32 * sum_q1 + n * zero_point1 as i32 * zero_point1 as i32;
 
-    let norm2 = norm2 - 2 * zero_point2 as i32 * sum_q2 + n * zero_point2 as i32 * zero_point2 as i32;
+    let norm2 =
+        norm2 - 2 * zero_point2 as i32 * sum_q2 + n * zero_point2 as i32 * zero_point2 as i32;
 
     let dot = dot_i32 as f32 * scale1 * scale2;
 
@@ -1154,12 +1163,14 @@ pub(crate) fn euclidean_i8_quantized_affine_avx2(
 
     let n = v2.len() as i32;
 
-    let dot_i32 =
-        dot_i32 - zero_point2 as i32 * sum_q1 - zero_point1 as i32 * sum_q2 + n * zero_point1 as i32 * zero_point2 as i32;
+    let dot_i32 = dot_i32 - zero_point2 as i32 * sum_q1 - zero_point1 as i32 * sum_q2
+        + n * zero_point1 as i32 * zero_point2 as i32;
 
-    let norm1 = norm1 - 2 * zero_point1 as i32 * sum_q1 + n * zero_point1 as i32 * zero_point1 as i32;
+    let norm1 =
+        norm1 - 2 * zero_point1 as i32 * sum_q1 + n * zero_point1 as i32 * zero_point1 as i32;
 
-    let norm2 = norm2 - 2 * zero_point2 as i32 * sum_q2 + n * zero_point2 as i32 * zero_point2 as i32;
+    let norm2 =
+        norm2 - 2 * zero_point2 as i32 * sum_q2 + n * zero_point2 as i32 * zero_point2 as i32;
 
     let dot = dot_i32 as f32 * scale1 * scale2;
 
