@@ -66,6 +66,7 @@ Blog Posts: [SeekStorm is now Open Source](https://seekstorm.com/blog/sneak-peek
 * **Sharded and leveled IVF index**.
 * **Approximate Nearest Neighbor Search** (ANNS) in an **Leveled IVF index**.
 * All **field filters** are directly active **during vector search**, not just as post-search filtering step.
+* SIMD (AVX2) acceleration for vector quantization and similarity calculation.
 
 #### Lexical Features
 * **BM25F** and **BM25F_Proximity** ranking
