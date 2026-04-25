@@ -1834,7 +1834,7 @@ Are you missing something? Let us know via issue or discussions.
 **New features**
 
 * ✅ Native vector search
-* Adding TurboQuant and product quantization (PQ) to vector search
+* Adding TurboQuant (TQ) to vector search
 * Geocoding, reverse geocoding, GeoJSON
 * Model Context Protocol (MCP) server for Retrieval Augmented Generation (RAG)
 * Split of storage and compute
