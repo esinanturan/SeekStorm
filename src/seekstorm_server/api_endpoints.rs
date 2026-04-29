@@ -775,14 +775,14 @@ pub(crate) async fn delete_index_api(
 /// commit is a **hard commit** for persistence on disk. A **soft commit** for searchability
 /// is invoked implicitly with every index_doc,
 /// i.e. the document can immediately searched and included in the search results
-/// if it matches the query AND the query paramter realtime=true is enabled.
+/// if it matches the query AND the query parameter realtime=true is enabled.
 /// **Use commit with caution, as it is an expensive operation**.
 /// **Usually, there is no need to invoke it manually**, as it is invoked automatically every 64k documents **per shard** and when the index is closed with close_index.
 /// Before terminating the program, always call close_index (commit), otherwise all documents indexed since last (manual or automatic) commit are lost.
 /// There are only 2 reasons that justify a manual commit:
 /// 1. if you want to search newly indexed documents without using realtime=true for search performance reasons or
 /// 2. if after indexing new documents there won't be more documents indexed (for some time),
-///    so there won't be (soon) a commit invoked automatically at the next 64k threshold **per shard**or close_index,
+///    so there won't be (soon) a commit invoked automatically at the next 64k threshold **per shard** or close_index,
 ///    but you still need immediate persistence guarantees on disk to protect against data loss in the event of a crash.
 #[utoipa::path(
     patch,
