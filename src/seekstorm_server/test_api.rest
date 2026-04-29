@@ -436,7 +436,7 @@ content-type: application/json
         "store": true, 
         "index_lexical": true
     },
-        {
+    {
         "field": "body",
         "field_type": "Text", 
         "store": true, 
@@ -594,7 +594,7 @@ content-type: application/json
     }], 
     "index_name": "test_index",
     "clustering": "None",
-    "inference": {"Model2Vec": { "model": "PotionBase2M", "chunk_size": 1000, "quantization": "I8" }}
+    "inference": {"Model2Vec": { "model": "PotionBase2M", "chunk_size": 1000, "quantization": "ScalarQuantizationI8" }}
 }
 
 ### index document
@@ -653,7 +653,7 @@ content-type: application/json
     }], 
     "index_name": "test_index",
     "clustering": "None",
-    "inference": {"Model2Vec": { "model": "PotionBase2M", "chunk_size": 1000, "quantization": "I8" }}
+    "inference": {"Model2Vec": { "model": "PotionBase2M", "chunk_size": 1000, "quantization": "ScalarQuantizationI8" }}
 }
 
 ### index document
@@ -744,6 +744,7 @@ content-type: application/json
     "search_mode": {"Vector":{"similarity_threshold": 0.7, "ann_mode": "All"}}
 }
 
+
 // vector search
 
 ### create index
@@ -770,7 +771,7 @@ content-type: application/json
     "index_name": "sift1m_index",
     "clustering": "None",
     "inference": {
-        "External": { "dimensions": 128, "precision": "F32", "quantization": "I8", "similarity": "Euclidean" }
+        "External": { "dimensions": 128, "precision": "F32", "quantization": "ScalarQuantizationI8", "similarity": "Euclidean" }
     }
 }
 

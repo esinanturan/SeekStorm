@@ -2,7 +2,9 @@
 use std::arch::x86_64::*;
 use std::fmt;
 
+use crate::vector::Quantization;
 use crate::vector::{Embedding, EmbeddingView};
+use rand::rngs::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -120,11 +122,12 @@ unsafe fn horizontal_sum_avx2(v: __m256) -> f32 {
 pub(crate) fn similarity_embedding_view(
     a: &Embedding,
     b: &EmbeddingView,
-    scale_norm: Option<(f32, i32, i16, i32, f32, i32, i16, i32)>,
+    scale_norm: Option<(f32, f32, i16, i32, f32, f32, i16, i32)>,
     vector_similarity: VectorSimilarity,
+    quantization: Quantization,
 ) -> f32 {
-    match (a, vector_similarity) {
-        (Embedding::I8(a), VectorSimilarity::Dot) => {
+    match (a, vector_similarity, quantization) {
+        (Embedding::I8(a), VectorSimilarity::Dot, Quantization::ScalarQuantizationI8) => {
             if let EmbeddingView::I8(b) = b {
                 if let Some((
                     query_scale,
@@ -146,28 +149,103 @@ pub(crate) fn similarity_embedding_view(
             }
         }
 
-        (Embedding::F32(a), VectorSimilarity::Dot) => {
-            if let EmbeddingView::F32(b) = b {
-                dot_f32(a, b)
+        (Embedding::I8(a), VectorSimilarity::Dot, Quantization::TurboQuantI8) => {
+            if let EmbeddingView::I8(b) = b {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::dot_i8_turboquant(a, query_scale, b, embedding_scale)
+                } else {
+                    dot_i8(a, b) as f32
+                }
             } else {
-                panic!("dot_f32 only supports f32 embeddings")
+                panic!("dot_i8 only supports i8 embeddings")
             }
         }
-        (Embedding::I8(a), VectorSimilarity::Cosine) => {
+
+        (Embedding::I8(a), VectorSimilarity::Dot, Quantization::None) => {
             if let EmbeddingView::I8(b) = b {
                 dot_i8(a, b) as f32
             } else {
-                panic!("dot_i8 only supports i8 embeddings1")
+                panic!("dot_i8 only supports i8 embeddings")
             }
         }
-        (Embedding::F32(a), VectorSimilarity::Cosine) => {
+
+        (Embedding::F32(a), VectorSimilarity::Dot, _) => {
             if let EmbeddingView::F32(b) = b {
                 dot_f32(a, b)
             } else {
                 panic!("dot_f32 only supports f32 embeddings")
             }
         }
-        (Embedding::I8(a), VectorSimilarity::Euclidean) => {
+        (Embedding::I8(a), VectorSimilarity::Cosine, Quantization::ScalarQuantizationI8) => {
+            if let EmbeddingView::I8(b) = b {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    dot_i8_quantized(a, query_scale, b, embedding_scale)
+                } else {
+                    dot_i8(a, b) as f32
+                }
+            } else {
+                panic!("dot_i8 only supports i8 embeddings")
+            }
+        }
+
+        (Embedding::I8(a), VectorSimilarity::Cosine, Quantization::TurboQuantI8) => {
+            if let EmbeddingView::I8(b) = b {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::dot_i8_turboquant(a, query_scale, b, embedding_scale)
+                } else {
+                    dot_i8(a, b) as f32
+                }
+            } else {
+                panic!("dot_i8 only supports i8 embeddings")
+            }
+        }
+
+        (Embedding::I8(a), VectorSimilarity::Cosine, Quantization::None) => {
+            if let EmbeddingView::I8(b) = b {
+                dot_i8(a, b) as f32
+            } else {
+                panic!("dot_i8 only supports i8 embeddings")
+            }
+        }
+
+        (Embedding::F32(a), VectorSimilarity::Cosine, _) => {
+            if let EmbeddingView::F32(b) = b {
+                dot_f32(a, b)
+            } else {
+                panic!("dot_f32 only supports f32 embeddings")
+            }
+        }
+        (Embedding::I8(a), VectorSimilarity::Euclidean, Quantization::ScalarQuantizationI8) => {
             if let EmbeddingView::I8(b) = b {
                 if let Some((
                     query_scale,
@@ -199,7 +277,44 @@ pub(crate) fn similarity_embedding_view(
                 panic!("euclidean_i8 only supports i8 embeddings")
             }
         }
-        (Embedding::F32(a), VectorSimilarity::Euclidean) => {
+        (Embedding::I8(a), VectorSimilarity::Euclidean, Quantization::TurboQuantI8) => {
+            if let EmbeddingView::I8(b) = b {
+                if let Some((
+                    query_scale,
+                    query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::euclidean_i8_turboquant(
+                        a,
+                        query_scale,
+                        query_norm,
+                        b,
+                        embedding_scale,
+                        embedding_norm,
+                    )
+                } else {
+                    -euclidean_i8(a, b)
+                }
+            } else {
+                panic!("euclidean_i8 only supports i8 embeddings")
+            }
+        }
+
+        (Embedding::I8(a), VectorSimilarity::Euclidean, Quantization::None) => {
+            if let EmbeddingView::I8(b) = b {
+                -euclidean_i8(a, b)
+            } else {
+                panic!("euclidean_i8 only supports i8 embeddings")
+            }
+        }
+
+        (Embedding::F32(a), VectorSimilarity::Euclidean, _) => {
             if let EmbeddingView::F32(b) = b {
                 -euclidean_f32(a, b)
             } else {
@@ -213,11 +328,12 @@ pub(crate) fn similarity_embedding_view(
 pub(crate) fn similarity_embedding(
     a: &Embedding,
     b: &Embedding,
-    scale_norm: Option<(f32, i32, i16, i32, f32, i32, i16, i32)>,
+    scale_norm: Option<(f32, f32, i16, i32, f32, f32, i16, i32)>,
     vector_similarity: VectorSimilarity,
+    quantization: Quantization,
 ) -> f32 {
-    match (a, vector_similarity) {
-        (Embedding::I8(a), VectorSimilarity::Dot) => {
+    match (a, vector_similarity, quantization) {
+        (Embedding::I8(a), VectorSimilarity::Dot, Quantization::ScalarQuantizationI8) => {
             if let Embedding::I8(b) = b {
                 if let Some((
                     query_scale,
@@ -239,28 +355,104 @@ pub(crate) fn similarity_embedding(
             }
         }
 
-        (Embedding::F32(a), VectorSimilarity::Dot) => {
+        (Embedding::I8(a), VectorSimilarity::Dot, Quantization::TurboQuantI8) => {
+            if let Embedding::I8(b) = b {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::dot_i8_turboquant(a, query_scale, b, embedding_scale)
+                } else {
+                    dot_i8(a, b) as f32
+                }
+            } else {
+                panic!("dot_i8 only supports i8 embeddings")
+            }
+        }
+
+        (Embedding::I8(a), VectorSimilarity::Dot, Quantization::None) => {
+            if let Embedding::I8(b) = b {
+                dot_i8(a, b) as f32
+            } else {
+                panic!("dot_i8 only supports i8 embeddings")
+            }
+        }
+
+        (Embedding::F32(a), VectorSimilarity::Dot, _) => {
             if let Embedding::F32(b) = b {
                 dot_f32(a, b)
             } else {
                 panic!("dot_f32 only supports f32 embeddings")
             }
         }
-        (Embedding::I8(a), VectorSimilarity::Cosine) => {
+
+        (Embedding::I8(a), VectorSimilarity::Cosine, Quantization::ScalarQuantizationI8) => {
+            if let Embedding::I8(b) = b {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    dot_i8_quantized(a, query_scale, b, embedding_scale)
+                } else {
+                    dot_i8(a, b) as f32
+                }
+            } else {
+                panic!("dot_i8 only supports i8 embeddings")
+            }
+        }
+
+        (Embedding::I8(a), VectorSimilarity::Cosine, Quantization::TurboQuantI8) => {
+            if let Embedding::I8(b) = b {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::dot_i8_turboquant(a, query_scale, b, embedding_scale)
+                } else {
+                    dot_i8(a, b) as f32
+                }
+            } else {
+                panic!("dot_i8 only supports i8 embeddings")
+            }
+        }
+
+        (Embedding::I8(a), VectorSimilarity::Cosine, _) => {
             if let Embedding::I8(b) = b {
                 dot_i8(a, b) as f32
             } else {
                 panic!("dot_i8 only supports i8 embeddings2")
             }
         }
-        (Embedding::F32(a), VectorSimilarity::Cosine) => {
+
+        (Embedding::F32(a), VectorSimilarity::Cosine, _) => {
             if let Embedding::F32(b) = b {
                 dot_f32(a, b)
             } else {
                 panic!("dot_f32 only supports f32 embeddings")
             }
         }
-        (Embedding::I8(a), VectorSimilarity::Euclidean) => {
+        (Embedding::I8(a), VectorSimilarity::Euclidean, Quantization::ScalarQuantizationI8) => {
             if let Embedding::I8(b) = b {
                 if let Some((
                     query_scale,
@@ -292,7 +484,42 @@ pub(crate) fn similarity_embedding(
                 panic!("euclidean_i8 only supports i8 embeddings")
             }
         }
-        (Embedding::F32(a), VectorSimilarity::Euclidean) => {
+        (Embedding::I8(a), VectorSimilarity::Euclidean, Quantization::TurboQuantI8) => {
+            if let Embedding::I8(b) = b {
+                if let Some((
+                    query_scale,
+                    query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::euclidean_i8_turboquant(
+                        a,
+                        query_scale,
+                        query_norm,
+                        b,
+                        embedding_scale,
+                        embedding_norm,
+                    )
+                } else {
+                    -euclidean_i8(a, b)
+                }
+            } else {
+                panic!("euclidean_i8 only supports i8 embeddings")
+            }
+        }
+        (Embedding::I8(a), VectorSimilarity::Euclidean, Quantization::None) => {
+            if let Embedding::I8(b) = b {
+                -euclidean_i8(a, b)
+            } else {
+                panic!("euclidean_i8 only supports i8 embeddings")
+            }
+        }
+        (Embedding::F32(a), VectorSimilarity::Euclidean, _) => {
             if let Embedding::F32(b) = b {
                 -euclidean_f32(a, b)
             } else {
@@ -303,15 +530,16 @@ pub(crate) fn similarity_embedding(
 }
 
 #[allow(clippy::type_complexity)]
-pub(crate) unsafe fn similarity_avx2_embedding_view(
+pub(crate) unsafe fn similarity_embedding_view_avx2(
     query: &QuerySimd,
     emb: &EmbeddingView,
-    scale_norm: Option<(f32, i32, i16, i32, f32, i32, i16, i32)>,
+    scale_norm: Option<(f32, f32, i16, i32, f32, f32, i16, i32)>,
     vector_similarity: VectorSimilarity,
+    quantization: Quantization,
 ) -> f32 {
     unsafe {
-        match (emb, vector_similarity) {
-            (EmbeddingView::I8(e), VectorSimilarity::Dot) => {
+        match (emb, vector_similarity, quantization) {
+            (EmbeddingView::I8(e), VectorSimilarity::Dot, Quantization::ScalarQuantizationI8) => {
                 if let Some((
                     query_scale,
                     _query_norm,
@@ -329,10 +557,80 @@ pub(crate) unsafe fn similarity_avx2_embedding_view(
                 }
             }
 
-            (EmbeddingView::F32(e), VectorSimilarity::Dot) => dot_f32_avx2(query, e),
-            (EmbeddingView::I8(e), VectorSimilarity::Cosine) => dot_i8_avx2(query, e) as f32,
-            (EmbeddingView::F32(e), VectorSimilarity::Cosine) => dot_f32_avx2(query, e),
-            (EmbeddingView::I8(e), VectorSimilarity::Euclidean) => {
+            (EmbeddingView::I8(e), VectorSimilarity::Dot, Quantization::TurboQuantI8) => {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::dot_i8_turboquant_avx2(query, query_scale, e, embedding_scale)
+                } else {
+                    dot_i8_avx2(query, e) as f32
+                }
+            }
+
+            (EmbeddingView::I8(e), VectorSimilarity::Dot, Quantization::None) => {
+                dot_i8_avx2(query, e) as f32
+            }
+
+            (EmbeddingView::F32(e), VectorSimilarity::Dot, _) => dot_f32_avx2(query, e),
+
+            (
+                EmbeddingView::I8(e),
+                VectorSimilarity::Cosine,
+                Quantization::ScalarQuantizationI8,
+            ) => {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    dot_i8_quantized_avx2(query, query_scale, e, embedding_scale)
+                } else {
+                    dot_i8_avx2(query, e) as f32
+                }
+            }
+
+            (EmbeddingView::I8(e), VectorSimilarity::Cosine, Quantization::TurboQuantI8) => {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::dot_i8_turboquant_avx2(query, query_scale, e, embedding_scale)
+                } else {
+                    dot_i8_avx2(query, e) as f32
+                }
+            }
+
+            (EmbeddingView::I8(e), VectorSimilarity::Cosine, Quantization::None) => {
+                dot_i8_avx2(query, e) as f32
+            }
+
+            (EmbeddingView::F32(e), VectorSimilarity::Cosine, _) => dot_f32_avx2(query, e),
+            (
+                EmbeddingView::I8(e),
+                VectorSimilarity::Euclidean,
+                Quantization::ScalarQuantizationI8,
+            ) => {
                 if let Some((
                     query_scale,
                     query_norm,
@@ -360,21 +658,51 @@ pub(crate) unsafe fn similarity_avx2_embedding_view(
                     -euclidean_i8_avx2(query, e) as f32
                 }
             }
-            (EmbeddingView::F32(e), VectorSimilarity::Euclidean) => -euclidean_f32_avx2(query, e),
+            (EmbeddingView::I8(e), VectorSimilarity::Euclidean, Quantization::TurboQuantI8) => {
+                if let Some((
+                    query_scale,
+                    query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::euclidean_i8_turboquant_avx2(
+                        query,
+                        query_scale,
+                        query_norm,
+                        e,
+                        embedding_scale,
+                        embedding_norm,
+                    )
+                } else {
+                    -euclidean_i8_avx2(query, e) as f32
+                }
+            }
+            (EmbeddingView::I8(e), VectorSimilarity::Euclidean, Quantization::None) => {
+                -euclidean_i8_avx2(query, e) as f32
+            }
+            (EmbeddingView::F32(e), VectorSimilarity::Euclidean, _) => {
+                -euclidean_f32_avx2(query, e)
+            }
         }
     }
 }
 
 #[allow(clippy::type_complexity)]
-pub(crate) unsafe fn similarity_avx2_embedding(
+pub(crate) unsafe fn similarity_embedding_avx2(
     query: &QuerySimd,
     emb: &Embedding,
-    scale_norm: Option<(f32, i32, i16, i32, f32, i32, i16, i32)>,
+    scale_norm: Option<(f32, f32, i16, i32, f32, f32, i16, i32)>,
     vector_similarity: VectorSimilarity,
+    quantization: Quantization,
 ) -> f32 {
     unsafe {
-        match (emb, vector_similarity) {
-            (Embedding::I8(e), VectorSimilarity::Dot) => {
+        match (emb, vector_similarity, quantization) {
+            (Embedding::I8(e), VectorSimilarity::Dot, Quantization::ScalarQuantizationI8) => {
                 if let Some((
                     query_scale,
                     _query_norm,
@@ -392,10 +720,73 @@ pub(crate) unsafe fn similarity_avx2_embedding(
                 }
             }
 
-            (Embedding::F32(e), VectorSimilarity::Dot) => dot_f32_avx2(query, e),
-            (Embedding::I8(e), VectorSimilarity::Cosine) => dot_i8_avx2(query, e) as f32,
-            (Embedding::F32(e), VectorSimilarity::Cosine) => dot_f32_avx2(query, e),
-            (Embedding::I8(e), VectorSimilarity::Euclidean) => {
+            (Embedding::I8(e), VectorSimilarity::Dot, Quantization::TurboQuantI8) => {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::dot_i8_turboquant_avx2(query, query_scale, e, embedding_scale)
+                } else {
+                    dot_i8_avx2(query, e) as f32
+                }
+            }
+
+            (Embedding::I8(e), VectorSimilarity::Dot, Quantization::None) => {
+                dot_i8_avx2(query, e) as f32
+            }
+
+            (Embedding::F32(e), VectorSimilarity::Dot, _) => dot_f32_avx2(query, e),
+
+            (Embedding::I8(e), VectorSimilarity::Cosine, Quantization::ScalarQuantizationI8) => {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    dot_i8_quantized_avx2(query, query_scale, e, embedding_scale)
+                } else {
+                    dot_i8_avx2(query, e) as f32
+                }
+            }
+
+            (Embedding::I8(e), VectorSimilarity::Cosine, Quantization::TurboQuantI8) => {
+                if let Some((
+                    query_scale,
+                    _query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    _embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::dot_i8_turboquant_avx2(query, query_scale, e, embedding_scale)
+                } else {
+                    dot_i8_avx2(query, e) as f32
+                }
+            }
+
+            (Embedding::I8(e), VectorSimilarity::Cosine, Quantization::None) => {
+                dot_i8_avx2(query, e) as f32
+            }
+
+            (Embedding::F32(e), VectorSimilarity::Cosine, _) => dot_f32_avx2(query, e),
+
+            (Embedding::I8(e), VectorSimilarity::Euclidean, Quantization::ScalarQuantizationI8) => {
                 if let Some((
                     query_scale,
                     query_norm,
@@ -423,7 +814,35 @@ pub(crate) unsafe fn similarity_avx2_embedding(
                     -euclidean_i8_avx2(query, e) as f32
                 }
             }
-            (Embedding::F32(e), VectorSimilarity::Euclidean) => -euclidean_f32_avx2(query, e),
+
+            (Embedding::I8(e), VectorSimilarity::Euclidean, Quantization::TurboQuantI8) => {
+                if let Some((
+                    query_scale,
+                    query_norm,
+                    _query_zero_point,
+                    _query_sum_q,
+                    embedding_scale,
+                    embedding_norm,
+                    _embedding_zero_point,
+                    _embedding_sum_q,
+                )) = scale_norm
+                {
+                    -TurboQuant::euclidean_i8_turboquant_avx2(
+                        query,
+                        query_scale,
+                        query_norm,
+                        e,
+                        embedding_scale,
+                        embedding_norm,
+                    )
+                } else {
+                    -euclidean_i8_avx2(query, e) as f32
+                }
+            }
+            (Embedding::I8(e), VectorSimilarity::Euclidean, Quantization::None) => {
+                -euclidean_i8_avx2(query, e) as f32
+            }
+            (Embedding::F32(e), VectorSimilarity::Euclidean, _) => -euclidean_f32_avx2(query, e),
         }
     }
 }
@@ -622,7 +1041,7 @@ pub(crate) unsafe fn dot_i8_avx2(query: &QuerySimd, emb: &[i8]) -> i32 {
 }
 
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn quantize_avx2_f32_to_i8(input: &[f32]) -> Embedding {
+pub(crate) unsafe fn quantize_f32_to_i8_avx2(input: &[f32]) -> Embedding {
     unsafe {
         let mut output = vec![0i8; input.len()];
         assert_eq!(input.len(), output.len());
@@ -673,11 +1092,101 @@ pub(crate) fn quantize_f32_to_i8(embedding: &[f32]) -> Embedding {
     Embedding::I8(output)
 }
 
+#[target_feature(enable = "avx2")]
+unsafe fn round_away_from_zero_avx2(x: __m256) -> __m256i {
+    let half = _mm256_set1_ps(0.5);
+
+    let sign = _mm256_and_ps(x, _mm256_set1_ps(-0.0));
+
+    let signed_half = _mm256_or_ps(half, sign);
+
+    let adjusted = _mm256_add_ps(x, signed_half);
+
+    _mm256_cvttps_epi32(adjusted)
+}
+
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn quantize_avx2(values: &[f32], scale: f32) -> Vec<i8> {
+    unsafe {
+        let inv_scale = 1.0 / scale;
+        let scale_vec = _mm256_set1_ps(inv_scale);
+
+        let mut result = vec![0i8; values.len()];
+        let mut i = 0;
+
+        while i + 16 <= values.len() {
+            let v0 = _mm256_loadu_ps(values.as_ptr().add(i));
+            let v1 = _mm256_loadu_ps(values.as_ptr().add(i + 8));
+
+            let s0 = _mm256_mul_ps(v0, scale_vec);
+            let s1 = _mm256_mul_ps(v1, scale_vec);
+
+            let i0 = round_away_from_zero_avx2(s0);
+            let i1 = round_away_from_zero_avx2(s1);
+
+            let p16 = _mm256_packs_epi32(i0, i1);
+
+            let p8 = _mm256_packs_epi16(p16, p16);
+
+            let lo = _mm256_extracti128_si256(p8, 0);
+            let hi = _mm256_extracti128_si256(p8, 1);
+
+            _mm_storeu_si128(result.as_mut_ptr().add(i) as *mut __m128i, lo);
+            _mm_storeu_si128(result.as_mut_ptr().add(i + 8) as *mut __m128i, hi);
+
+            i += 16;
+        }
+
+        for j in i..values.len() {
+            result[j] = (values[j] * inv_scale).round() as i8;
+        }
+
+        result
+    }
+}
+
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn squared_norm_avx2(data: &[i8]) -> i32 {
+    unsafe {
+        let mut sum = _mm256_setzero_si256();
+        let mut i = 0;
+
+        while i + 32 <= data.len() {
+            let v = _mm256_loadu_si256(data.as_ptr().add(i) as *const __m256i);
+
+            let v_lo = _mm256_castsi256_si128(v);
+            let v_hi = _mm256_extracti128_si256(v, 1);
+
+            let lo = _mm256_cvtepi8_epi16(v_lo);
+            let hi = _mm256_cvtepi8_epi16(v_hi);
+
+            let lo_sq = _mm256_madd_epi16(lo, lo);
+            let hi_sq = _mm256_madd_epi16(hi, hi);
+
+            sum = _mm256_add_epi32(sum, lo_sq);
+            sum = _mm256_add_epi32(sum, hi_sq);
+
+            i += 32;
+        }
+
+        let mut tmp = [0i32; 8];
+        _mm256_storeu_si256(tmp.as_mut_ptr() as *mut __m256i, sum);
+
+        let mut total: i32 = tmp.iter().sum();
+
+        for &x in &data[i..] {
+            total += (x as i32) * (x as i32);
+        }
+
+        total
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct QuantizedVector {
     pub(crate) data: Vec<i8>,
     pub(crate) scale: f32,
-    pub(crate) norm: i32,
+    pub(crate) norm: f32,
     pub(crate) zero_point: i16,
     pub(crate) sum_q: i32,
 }
@@ -692,7 +1201,7 @@ impl QuantizedVector {
         Self {
             data,
             scale,
-            norm: 0,
+            norm: 0.0,
             zero_point: 0,
             sum_q: 0,
         }
@@ -703,12 +1212,12 @@ impl QuantizedVector {
             let max_val = Self::max_abs_avx2(values);
             let scale = max_val / 127.0;
 
-            let data = Self::quantize_avx2(values, scale);
+            let data = quantize_avx2(values, scale);
 
             Self {
                 data,
                 scale,
-                norm: 0,
+                norm: 0.0,
                 zero_point: 0,
                 sum_q: 0,
             }
@@ -750,13 +1259,16 @@ impl QuantizedVector {
             .map(|&x| ((x / scale).round() as i32 + zero_point as i32).clamp(-128, 127) as i8)
             .collect();
 
-        let squared_norm = data.iter().map(|&x| x as i32 * x as i32).sum();
+        let norm: i32 = data.iter().map(|&x| x as i32 * x as i32).sum();
         let sum_q = data.iter().map(|x| *x as i32).sum::<i32>();
+
+        let norm: i32 = norm - 2 * zero_point as i32 * sum_q
+            + (data.len() as i32) * zero_point as i32 * zero_point as i32;
 
         Self {
             data,
             scale,
-            norm: squared_norm,
+            norm: norm as f32 * scale * scale,
             zero_point,
             sum_q,
         }
@@ -799,13 +1311,16 @@ impl QuantizedVector {
 
             let data = Self::quantize_affine_avx2(values, scale, zero_point);
 
-            let squared_norm = Self::squared_norm_avx2(&data);
+            let norm = squared_norm_avx2(&data);
             let sum_q = Self::sum_avx2(&data);
+
+            let norm: i32 = norm - 2 * zero_point as i32 * sum_q
+                + (data.len() as i32) * zero_point as i32 * zero_point as i32;
 
             Self {
                 data,
                 scale,
-                norm: squared_norm,
+                norm: norm as f32 * scale * scale,
                 zero_point,
                 sum_q,
             }
@@ -913,59 +1428,6 @@ impl QuantizedVector {
     }
 
     #[target_feature(enable = "avx2")]
-    unsafe fn quantize_avx2(values: &[f32], scale: f32) -> Vec<i8> {
-        unsafe {
-            let inv_scale = 1.0 / scale;
-            let scale_vec = _mm256_set1_ps(inv_scale);
-
-            let mut result = vec![0i8; values.len()];
-            let mut i = 0;
-
-            while i + 16 <= values.len() {
-                let v0 = _mm256_loadu_ps(values.as_ptr().add(i));
-                let v1 = _mm256_loadu_ps(values.as_ptr().add(i + 8));
-
-                let s0 = _mm256_mul_ps(v0, scale_vec);
-                let s1 = _mm256_mul_ps(v1, scale_vec);
-
-                let i0 = _mm256_cvtps_epi32(s0);
-                let i1 = _mm256_cvtps_epi32(s1);
-
-                let p16 = _mm256_packs_epi32(i0, i1);
-
-                let p8 = _mm256_packs_epi16(p16, p16);
-
-                let lo = _mm256_extracti128_si256(p8, 0);
-                let hi = _mm256_extracti128_si256(p8, 1);
-
-                _mm_storeu_si128(result.as_mut_ptr().add(i) as *mut __m128i, lo);
-                _mm_storeu_si128(result.as_mut_ptr().add(i + 8) as *mut __m128i, hi);
-
-                i += 16;
-            }
-
-            for j in i..values.len() {
-                result[j] = (values[j] * inv_scale).round() as i8;
-            }
-
-            result
-        }
-    }
-
-    #[target_feature(enable = "avx2")]
-    unsafe fn round_away_from_zero_avx2(x: __m256) -> __m256i {
-        let half = _mm256_set1_ps(0.5);
-
-        let sign = _mm256_and_ps(x, _mm256_set1_ps(-0.0));
-
-        let signed_half = _mm256_or_ps(half, sign);
-
-        let adjusted = _mm256_add_ps(x, signed_half);
-
-        _mm256_cvttps_epi32(adjusted)
-    }
-
-    #[target_feature(enable = "avx2")]
     pub(crate) unsafe fn quantize_affine_avx2(
         values: &[f32],
         scale: f32,
@@ -990,8 +1452,8 @@ impl QuantizedVector {
                 let s0 = _mm256_mul_ps(v0, scale_vec);
                 let s1 = _mm256_mul_ps(v1, scale_vec);
 
-                let mut i0 = Self::round_away_from_zero_avx2(s0);
-                let mut i1 = Self::round_away_from_zero_avx2(s1);
+                let mut i0 = round_away_from_zero_avx2(s0);
+                let mut i1 = round_away_from_zero_avx2(s1);
 
                 i0 = _mm256_add_epi32(i0, zp_vec);
                 i1 = _mm256_add_epi32(i1, zp_vec);
@@ -1023,43 +1485,6 @@ impl QuantizedVector {
             }
 
             result
-        }
-    }
-
-    #[target_feature(enable = "avx2")]
-    pub(crate) unsafe fn squared_norm_avx2(data: &[i8]) -> i32 {
-        unsafe {
-            let mut sum = _mm256_setzero_si256();
-            let mut i = 0;
-
-            while i + 32 <= data.len() {
-                let v = _mm256_loadu_si256(data.as_ptr().add(i) as *const __m256i);
-
-                let v_lo = _mm256_castsi256_si128(v);
-                let v_hi = _mm256_extracti128_si256(v, 1);
-
-                let lo = _mm256_cvtepi8_epi16(v_lo);
-                let hi = _mm256_cvtepi8_epi16(v_hi);
-
-                let lo_sq = _mm256_madd_epi16(lo, lo);
-                let hi_sq = _mm256_madd_epi16(hi, hi);
-
-                sum = _mm256_add_epi32(sum, lo_sq);
-                sum = _mm256_add_epi32(sum, hi_sq);
-
-                i += 32;
-            }
-
-            let mut tmp = [0i32; 8];
-            _mm256_storeu_si256(tmp.as_mut_ptr() as *mut __m256i, sum);
-
-            let mut total: i32 = tmp.iter().sum();
-
-            for &x in &data[i..] {
-                total += (x as i32) * (x as i32);
-            }
-
-            total
         }
     }
 
@@ -1117,12 +1542,12 @@ fn dot_i8_quantized_avx2(v1: &QuerySimd, scale1: f32, v2: &[i8], scale2: f32) ->
 pub(crate) fn euclidean_i8_quantized_affine(
     v1: &[i8],
     scale1: f32,
-    norm1: i32,
+    norm1: f32,
     zero_point1: i16,
     sum_q1: i32,
     v2: &[i8],
     scale2: f32,
-    norm2: i32,
+    norm2: f32,
     zero_point2: i16,
     sum_q2: i32,
 ) -> f32 {
@@ -1133,16 +1558,8 @@ pub(crate) fn euclidean_i8_quantized_affine(
     let dot_i32 = dot_i32 - zero_point2 as i32 * sum_q1 - zero_point1 as i32 * sum_q2
         + n * zero_point1 as i32 * zero_point2 as i32;
 
-    let norm1 =
-        norm1 - 2 * zero_point1 as i32 * sum_q1 + n * zero_point1 as i32 * zero_point1 as i32;
-
-    let norm2 =
-        norm2 - 2 * zero_point2 as i32 * sum_q2 + n * zero_point2 as i32 * zero_point2 as i32;
-
     let dot = dot_i32 as f32 * scale1 * scale2;
 
-    let norm1 = norm1 as f32 * scale1 * scale1;
-    let norm2 = norm2 as f32 * scale2 * scale2;
     (norm1 + norm2 - 2.0 * dot).max(0.0)
 }
 
@@ -1150,12 +1567,12 @@ pub(crate) fn euclidean_i8_quantized_affine(
 pub(crate) fn euclidean_i8_quantized_affine_avx2(
     v1: &QuerySimd,
     scale1: f32,
-    norm1: i32,
+    norm1: f32,
     zero_point1: i16,
     sum_q1: i32,
     v2: &[i8],
     scale2: f32,
-    norm2: i32,
+    norm2: f32,
     zero_point2: i16,
     sum_q2: i32,
 ) -> f32 {
@@ -1166,15 +1583,263 @@ pub(crate) fn euclidean_i8_quantized_affine_avx2(
     let dot_i32 = dot_i32 - zero_point2 as i32 * sum_q1 - zero_point1 as i32 * sum_q2
         + n * zero_point1 as i32 * zero_point2 as i32;
 
-    let norm1 =
-        norm1 - 2 * zero_point1 as i32 * sum_q1 + n * zero_point1 as i32 * zero_point1 as i32;
-
-    let norm2 =
-        norm2 - 2 * zero_point2 as i32 * sum_q2 + n * zero_point2 as i32 * zero_point2 as i32;
-
     let dot = dot_i32 as f32 * scale1 * scale2;
 
-    let norm1 = norm1 as f32 * scale1 * scale1;
-    let norm2 = norm2 as f32 * scale2 * scale2;
     (norm1 + norm2 - 2.0 * dot).max(0.0)
+}
+
+use rand::RngExt;
+use rand::SeedableRng;
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TurboQuant {
+    /// Dimension of the quantized vectors (must be a power of two for FWHT)
+    pub(crate) dim: usize,
+    /// Original dimension of the input vectors
+    pub(crate) _original_dim: usize,
+    /// Random sign mask for scrambling (same for all vectors, fixed by seed)
+    pub(crate) seed_mask: Vec<f32>,
+}
+
+impl TurboQuant {
+    fn next_power_of_two(n: usize) -> usize {
+        if n.is_power_of_two() {
+            n
+        } else {
+            n.next_power_of_two()
+        }
+    }
+
+    pub fn new(_original_dim: usize, seed: u64) -> Self {
+        let dim = Self::next_power_of_two(_original_dim);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let seed_mask = (0..dim)
+            .map(|_| if rng.random_bool(0.5) { 1.0 } else { -1.0 })
+            .collect();
+
+        Self {
+            dim,
+            _original_dim,
+            seed_mask,
+        }
+    }
+
+    fn fwht(a: &mut [f32]) {
+        let n = a.len();
+        let mut h = 1;
+        while h < n {
+            for i in (0..n).step_by(h * 2) {
+                for j in i..i + h {
+                    let x = a[j];
+                    let y = a[j + h];
+                    a[j] = x + y;
+                    a[j + h] = x - y;
+                }
+            }
+            h *= 2;
+        }
+        let norm = (n as f32).sqrt();
+        for x in a.iter_mut() {
+            *x /= norm;
+        }
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn fwht_avx2(a: &mut [f32]) {
+        let n = a.len();
+        let mut h = 1;
+
+        while h < n {
+            if h < 8 {
+                for i in (0..n).step_by(h * 2) {
+                    for j in i..i + h {
+                        let x = a[j];
+                        let y = a[j + h];
+                        a[j] = x + y;
+                        a[j + h] = x - y;
+                    }
+                }
+            } else {
+                for i in (0..n).step_by(h * 2) {
+                    for j in (i..i + h).step_by(8) {
+                        unsafe {
+                            let va = _mm256_loadu_ps(a.as_ptr().add(j));
+                            let vb = _mm256_loadu_ps(a.as_ptr().add(j + h));
+
+                            let v_add = _mm256_add_ps(va, vb);
+                            let v_sub = _mm256_sub_ps(va, vb);
+
+                            _mm256_storeu_ps(a.as_mut_ptr().add(j), v_add);
+                            _mm256_storeu_ps(a.as_mut_ptr().add(j + h), v_sub);
+                        }
+                    }
+                }
+            }
+            h *= 2;
+        }
+
+        let norm_val = (n as f32).sqrt();
+        let v_norm = _mm256_set1_ps(norm_val);
+        for i in (0..n).step_by(8) {
+            unsafe {
+                let v = _mm256_loadu_ps(a.as_ptr().add(i));
+                let v_res = _mm256_div_ps(v, v_norm);
+                _mm256_storeu_ps(a.as_mut_ptr().add(i), v_res);
+            }
+        }
+    }
+
+    /// Quantisizes a f32 vector of arbitrary size to the next power of two.
+    pub(crate) fn quantize_f32_i8(&self, vec: &[f32]) -> QuantizedVector {
+        let mut padded_data = vec![0.0; self.dim];
+        let len_to_copy = vec.len().min(self.dim);
+        padded_data[..len_to_copy].copy_from_slice(&vec[..len_to_copy]);
+
+        for (i, p_data) in padded_data.iter_mut().enumerate() {
+            *p_data *= self.seed_mask[i];
+        }
+
+        Self::fwht(&mut padded_data);
+
+        let scale = self.calculate_scale(&padded_data);
+
+        let quantized: Vec<i8> = padded_data
+            .into_iter()
+            .map(|x| (x / scale).round().clamp(-127.0, 127.0) as i8)
+            .collect();
+
+        let squared_norm: i32 = quantized.iter().map(|&x| x as i32 * x as i32).sum();
+
+        QuantizedVector {
+            data: quantized,
+            scale,
+            norm: squared_norm as f32 * scale * scale,
+            zero_point: 0,
+            sum_q: 0,
+        }
+    }
+
+    /// Quantisizes a f32 vector of arbitrary size to the next power of two, using AVX2 for acceleration
+    pub(crate) fn quantize_f32_i8_avx2(&self, vec: &[f32]) -> QuantizedVector {
+        let mut padded_data = vec![0.0; self.dim];
+        let len_to_copy = vec.len().min(self.dim);
+        padded_data[..len_to_copy].copy_from_slice(&vec[..len_to_copy]);
+
+        unsafe { Self::hadamard_product_avx2(&mut padded_data, &self.seed_mask) };
+
+        unsafe { Self::fwht_avx2(&mut padded_data) };
+
+        let scale = unsafe { self.calculate_scale_avx2(&padded_data) }; // !????
+
+        let quantized = unsafe { quantize_avx2(&padded_data, scale) };
+
+        let squared_norm = unsafe { squared_norm_avx2(&quantized) };
+
+        QuantizedVector {
+            data: quantized,
+            scale,
+            norm: squared_norm as f32 * scale * scale,
+            zero_point: 0,
+            sum_q: 0,
+        }
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn hadamard_product_avx2(padded_data: &mut [f32], seed_mask: &[f32]) {
+        let n = padded_data.len();
+        let chunks = n / 8;
+
+        for i in 0..chunks {
+            unsafe {
+                let offset = i * 8;
+
+                let data_vec = _mm256_loadu_ps(padded_data.as_ptr().add(offset));
+                let mask_vec = _mm256_loadu_ps(seed_mask.as_ptr().add(offset));
+
+                let result_vec = _mm256_mul_ps(data_vec, mask_vec);
+
+                _mm256_storeu_ps(padded_data.as_mut_ptr().add(offset), result_vec);
+            }
+        }
+
+        for i in (chunks * 8)..n {
+            padded_data[i] *= seed_mask[i];
+        }
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn calculate_scale_avx2(&self, rotated: &[f32]) -> f32 {
+        unsafe {
+            let mut sum_sq;
+            let chunks = rotated.chunks_exact(8);
+            let rem = chunks.remainder();
+
+            let mut sum_vec = _mm256_setzero_ps();
+            for chunk in chunks {
+                let v = _mm256_loadu_ps(chunk.as_ptr());
+                sum_vec = _mm256_add_ps(sum_vec, _mm256_mul_ps(v, v));
+            }
+
+            sum_sq = horizontal_sum_avx2(sum_vec);
+            for &x in rem {
+                sum_sq += x * x;
+            }
+
+            let sigma = sum_sq.sqrt() / (self.dim as f32).sqrt();
+
+            (sigma / 32.0).max(1e-8)
+        }
+    }
+
+    fn calculate_scale(&self, rotated: &[f32]) -> f32 {
+        let l2_norm = rotated.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let sigma = l2_norm / (self.dim as f32).sqrt();
+        (sigma / 32.0).max(1e-8)
+    }
+
+    /// QJL-corrected Euclidean Distance (Squared)
+    pub(crate) fn euclidean_i8_turboquant_avx2(
+        v1_q: &QuerySimd,
+        scale1: f32,
+        norm1: f32,
+        v2_q: &[i8],
+        scale2: f32,
+        norm2: f32,
+    ) -> f32 {
+        let dot_q = Self::dot_i8_turboquant_avx2(v1_q, scale1, v2_q, scale2);
+        (norm1 + norm2 - (2.0 * dot_q)).max(0.0)
+    }
+
+    /// QJL-corrected Euclidean Distance (Squared)
+    pub(crate) fn euclidean_i8_turboquant(
+        v1_q: &[i8],
+        scale1: f32,
+        norm1: f32,
+        v2_q: &[i8],
+        scale2: f32,
+        norm2: f32,
+    ) -> f32 {
+        let dot_q = Self::dot_i8_turboquant(v1_q, scale1, v2_q, scale2);
+        (norm1 + norm2 - (2.0 * dot_q)).max(0.0)
+    }
+
+    /// Calculates the Dot Product between two vectors.
+    pub(crate) fn dot_i8_turboquant(v1_q: &[i8], scale1: f32, v2_q: &[i8], scale2: f32) -> f32 {
+        let dot = dot_i8(v1_q, v2_q);
+
+        (dot as f32) * scale1 * scale2
+    }
+
+    /// Calculates the estimated Dot Product between two vectors.
+    pub(crate) fn dot_i8_turboquant_avx2(
+        v1_q: &QuerySimd,
+        scale1: f32,
+        v2_q: &[i8],
+        scale2: f32,
+    ) -> f32 {
+        let dot = unsafe { dot_i8_avx2(v1_q, v2_q) };
+
+        (dot as f32) * scale1 * scale2
+    }
 }

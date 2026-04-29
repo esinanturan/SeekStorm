@@ -8,7 +8,7 @@ use crate::{
     index::{Clustering, Shard},
     vector::{Embedding, Quantization},
     vector_similarity::{
-        QuerySimd, VectorSimilarity, similarity_avx2_embedding, similarity_embedding,
+        QuerySimd, VectorSimilarity, similarity_embedding, similarity_embedding_avx2,
     },
 };
 
@@ -41,18 +41,19 @@ pub(crate) struct ParentMedoid {
     pub medoid_index: usize,
     pub is_medoid: bool,
     pub similarity: f32,
+
     pub doc_id: u16,
     pub field_id: u32,
     pub chunk_id: u32,
     pub embedding: Embedding,
     pub scale: f32,
-    pub norm: i32,
+    pub norm: f32,
     pub zero_point: i16,
     pub sum_q: i32,
 }
 
 #[target_feature(enable = "avx2")]
-unsafe fn accumulate_avx2_f32(sum: &mut [f32], emb: &[f32]) {
+unsafe fn accumulate_f32_avx2(sum: &mut [f32], emb: &[f32]) {
     unsafe {
         let len = emb.len();
 
@@ -82,7 +83,7 @@ unsafe fn accumulate_avx2_f32(sum: &mut [f32], emb: &[f32]) {
     }
 }
 
-unsafe fn accumulate_avx2_i8(sum: &mut [f32], emb: &[i8]) {
+unsafe fn accumulate_i8_avx2(sum: &mut [f32], emb: &[i8]) {
     unsafe {
         let len = emb.len();
 
@@ -124,8 +125,8 @@ unsafe fn accumulate_avx2_i8(sum: &mut [f32], emb: &[i8]) {
 
 pub(crate) fn accumulate_avx2(sum: &mut [f32], emb: &Embedding) {
     match emb {
-        Embedding::I8(emb) => unsafe { accumulate_avx2_i8(sum, emb) },
-        Embedding::F32(emb) => unsafe { accumulate_avx2_f32(sum, emb) },
+        Embedding::I8(emb) => unsafe { accumulate_i8_avx2(sum, emb) },
+        Embedding::F32(emb) => unsafe { accumulate_f32_avx2(sum, emb) },
     }
 }
 
@@ -207,11 +208,12 @@ impl Shard {
             for (i, medoid_candidate) in self.block_vector_buffer.iter().enumerate() {
                 let scale_norm = None;
                 let similarity = if self.is_avx2 {
-                    similarity_avx2_embedding(
+                    similarity_embedding_avx2(
                         &query_simd,
                         &medoid_candidate.embedding,
                         scale_norm,
                         vector_similarity,
+                        self.quantization,
                     )
                 } else {
                     similarity_embedding(
@@ -219,6 +221,7 @@ impl Shard {
                         &medoid_candidate.embedding,
                         scale_norm,
                         vector_similarity,
+                        self.quantization,
                     )
                 };
                 if similarity > best_similarity {
@@ -249,11 +252,12 @@ impl Shard {
                         None
                     };
                     let similarity = if self.is_avx2 {
-                        similarity_avx2_embedding(
+                        similarity_embedding_avx2(
                             &query_simd,
                             &self.block_vector_buffer[i].embedding,
                             scale_norm,
                             vector_similarity,
+                            self.quantization,
                         )
                     } else {
                         similarity_embedding(
@@ -261,6 +265,7 @@ impl Shard {
                             &self.block_vector_buffer[i].embedding,
                             scale_norm,
                             vector_similarity,
+                            self.quantization,
                         )
                     };
                     self.block_vector_buffer[i].similarity = similarity;
@@ -316,11 +321,12 @@ impl Shard {
                                 None
                             };
                             let similarity = if self.is_avx2 {
-                                similarity_avx2_embedding(
+                                similarity_embedding_avx2(
                                     &record_outer_simd,
                                     &self.block_vector_buffer[j].embedding,
                                     scale_norm,
                                     vector_similarity,
+                                    self.quantization,
                                 )
                             } else {
                                 similarity_embedding(
@@ -328,6 +334,7 @@ impl Shard {
                                     &self.block_vector_buffer[j].embedding,
                                     scale_norm,
                                     vector_similarity,
+                                    self.quantization,
                                 )
                             };
 
@@ -366,7 +373,7 @@ impl Shard {
                             None
                         };
                         let similarity = if self.is_avx2 {
-                            similarity_avx2_embedding(
+                            similarity_embedding_avx2(
                                 &QuerySimd::new(
                                     &self.block_vector_buffer[medoid.medoid_index]
                                         .embedding
@@ -375,6 +382,7 @@ impl Shard {
                                 &self.block_vector_buffer[i].embedding,
                                 scale_norm,
                                 vector_similarity,
+                                self.quantization,
                             )
                         } else {
                             similarity_embedding(
@@ -382,6 +390,7 @@ impl Shard {
                                 &self.block_vector_buffer[i].embedding,
                                 scale_norm,
                                 vector_similarity,
+                                self.quantization,
                             )
                         };
                         if similarity > self.block_vector_buffer[i].similarity {
@@ -475,11 +484,12 @@ impl Shard {
                     let medoid_index = self.block_vector_buffer[i].medoid_index;
                     let scale_norm = None;
                     let similarity = if self.is_avx2 {
-                        similarity_avx2_embedding(
+                        similarity_embedding_avx2(
                             &centroid_map[&medoid_index].query_simd,
                             &medoid_candidate.embedding,
                             scale_norm,
                             vector_similarity,
+                            self.quantization,
                         )
                     } else {
                         similarity_embedding(
@@ -487,6 +497,7 @@ impl Shard {
                             &medoid_candidate.embedding,
                             scale_norm,
                             vector_similarity,
+                            self.quantization,
                         )
                     };
 
@@ -518,7 +529,7 @@ impl Shard {
                                 None
                             };
                             let similarity = if self.is_avx2 {
-                                similarity_avx2_embedding(
+                                similarity_embedding_avx2(
                                     &QuerySimd::new(
                                         &self.block_vector_buffer[new_medoid_index]
                                             .embedding
@@ -527,6 +538,7 @@ impl Shard {
                                     &self.block_vector_buffer[i].embedding,
                                     scale_norm,
                                     vector_similarity,
+                                    self.quantization,
                                 )
                             } else {
                                 similarity_embedding(
@@ -534,6 +546,7 @@ impl Shard {
                                     &self.block_vector_buffer[i].embedding,
                                     scale_norm,
                                     vector_similarity,
+                                    self.quantization,
                                 )
                             };
                             let vector = &mut self.block_vector_buffer[i];
@@ -605,11 +618,12 @@ impl Shard {
                             None
                         };
                         let similarity = if self.is_avx2 {
-                            similarity_avx2_embedding(
+                            similarity_embedding_avx2(
                                 &centroid_map[medoid_index].query_simd,
                                 &self.block_vector_buffer[i].embedding,
                                 scale_norm,
                                 vector_similarity,
+                                self.quantization,
                             )
                         } else {
                             similarity_embedding(
@@ -617,6 +631,7 @@ impl Shard {
                                 &self.block_vector_buffer[i].embedding,
                                 scale_norm,
                                 vector_similarity,
+                                self.quantization,
                             )
                         };
                         if similarity > self.block_vector_buffer[i].similarity {

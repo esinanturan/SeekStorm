@@ -26,7 +26,13 @@ Development started in 2015, in [production](https://seekstorm.com) since 2020, 
 
 SeekStorm is open source licensed under the [Apache License 2.0](https://github.com/SeekStorm/SeekStorm?tab=Apache-2.0-1-ov-file#readme)
 
-Blog Posts: [SeekStorm is now Open Source](https://seekstorm.com/blog/sneak-peek-seekstorm-rust/) and [SeekStorm gets Faceted search, Geo proximity search, Result sorting](https://seekstorm.com/blog/faceted_search-geo-proximity-search/)
+Blog Posts: 
+- [SeekStorm is now Open Source](https://seekstorm.com/blog/sneak-peek-seekstorm-rust/)
+- [SeekStorm gets Faceted search, Geo proximity search, Result sorting](https://seekstorm.com/blog/faceted_search-geo-proximity-search/)
+- [SeekStorm sharded index architecture - using a multi-core processor like a miniature data center](https://seekstorm.com/blog/SeekStorm-sharded-index-architecture/)
+- [N-gram index for faster phrase search: latency vs. size](https://seekstorm.com/blog/n-gram-indexing-for-faster-phrase-search/)
+- [Typo-tolerant Query auto-completion - derived from indexed documents](https://seekstorm.com/blog/query-auto-completion-(QAC)/)
+- [SeekStorm 3.0 adds vector search & hybrid search](https://seekstorm.com/blog/seekstorm-adds-vector_search-hybrid-search/)
 
 ### SeekStorm high-performance search library
 
@@ -56,11 +62,11 @@ Blog Posts: [SeekStorm is now Open Source](https://seekstorm.com/blog/sneak-peek
 
 #### Vector Features
 * **Multi-Vector indexing**: both from multiple fields and from multiple chunks per field.
-* **Integrated inference**: Generate and index embeddings from any text document field.
+* **Integrated inference**: Generate and index embeddings from any text document field, using [Model2Vec from MinishLab](https://github.com/MinishLab/model2vec-rs).
 * Alternatively, import and index externally generated embeddings.
 * Multiple vector precisions: F32, I8.
 * Multiple similarity measures: Cosine similarity, Dot product, Euclidean distance.
-* **Scalar Quantization** (SQ).
+* **TurboQuant** (TQ) and affine **Scalar Quantization** (SQ).
 * **Chunking** that respects **sentence boundaries** and **Unicode segmentation** for multilingual text.
 * **K-Medoid clustering**: PAM (Partition Around Medoids) with actual data points as centers.
 * **Sharded and leveled IVF index**.
@@ -202,7 +208,7 @@ See our **blog posts** for more detailed information: [SeekStorm is now Open Sou
 <br>
 <br>
 
-- 1 million vectors, 128 dimensions, f32 precision  
+- [SIFT1M dataset](http://corpus-texmex.irisa.fr/) 1 million vectors, 128 dimensions, f32 precision  
 - nprobe=16 -> recall@10=95%, average latency=188 microseconds  
 - nprobe=33 -> recall@10=99%, average latency=302 microseconds  
 
@@ -480,7 +486,7 @@ use std::path::Path;
 use seekstorm::index::open_index;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap(); 
+let mut index_arc=open_index(index_path).await.unwrap(); 
 
 # });
 ```
@@ -493,7 +499,7 @@ use std::path::Path;
 use seekstorm::index::{open_index, IndexDocuments};
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap(); 
+let mut index_arc=open_index(index_path).await.unwrap(); 
 
 let documents_json = r#"
 [{"title":"title1 test","body":"body1","url":"url1"},
@@ -515,7 +521,7 @@ use std::path::Path;
 use serde_json::Value;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap(); 
+let mut index_arc=open_index(index_path).await.unwrap(); 
 
 let document= Document::from([
     ("title".to_string(), Value::String("title4 test".to_string())),
@@ -537,7 +543,7 @@ use seekstorm::index::open_index;
 use std::path::Path;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap(); 
+let mut index_arc=open_index(index_path).await.unwrap(); 
 
 index_arc.commit().await;
 
@@ -553,7 +559,7 @@ use seekstorm::index::open_index;
 use std::path::Path;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap(); 
+let mut index_arc=open_index(index_path).await.unwrap(); 
 
 let query="test".to_string();
 let query_vector=None;
@@ -673,7 +679,7 @@ use seekstorm::index::open_index;
 use std::path::Path;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap(); 
+let mut index_arc=open_index(index_path).await.unwrap(); 
 
 let query_vec=vec!["house".to_string(),"car".to_string(),"bird".to_string(),"sky".to_string()];
 let query_vector=None;
@@ -789,7 +795,7 @@ use seekstorm::index::open_index;
 use std::path::Path;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap(); 
+let mut index_arc=open_index(index_path).await.unwrap(); 
 
 let file_path=Path::new("wiki-articles.json");
 let _ =index_arc.ingest_json(file_path).await;
@@ -854,7 +860,7 @@ use std::path::Path;
 use seekstorm::ingest::IngestPdf;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap();
+let mut index_arc=open_index(index_path).await.unwrap();
 
 let file_path=Path::new("C:/Users/johndoe/Downloads");
 let _ =index_arc.ingest_pdf(file_path).await;
@@ -871,7 +877,7 @@ use std::path::Path;
 use seekstorm::ingest::IndexPdfFile;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap();
+let mut index_arc=open_index(index_path).await.unwrap();
 
 let file_path=Path::new("C:/test.pdf");
 let _ =index_arc.index_pdf_file(file_path).await;
@@ -890,7 +896,7 @@ use chrono::Utc;
 use seekstorm::ingest::IndexPdfBytes;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap();
+let mut index_arc=open_index(index_path).await.unwrap();
 
 //solely used as meta data if it can't be extracted from document bytes
 let file_date=Utc::now().timestamp();
@@ -910,7 +916,7 @@ use seekstorm::index::open_index;
 use std::path::Path;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap();
+let mut index_arc=open_index(index_path).await.unwrap();
 
 let doc_id=0;
 let _file=index_arc.read().await.get_file(doc_id).await.unwrap();
@@ -925,7 +931,7 @@ use seekstorm::index::open_index;
 use std::path::Path;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap();
+let mut index_arc=open_index(index_path).await.unwrap();
 
 index_arc.write().await.clear_index().await;
 
@@ -940,7 +946,7 @@ use seekstorm::index::open_index;
 use std::path::Path;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap();
+let mut index_arc=open_index(index_path).await.unwrap();
 
 index_arc.write().await.delete_index();
 
@@ -956,7 +962,7 @@ use seekstorm::{index::open_index,iterator::GetIterator};
 use std::path::Path;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap();
+let mut index_arc=open_index(index_path).await.unwrap();
 
 //display min_docid: the min_docid is NOT always 0, if the first shards are empty!
 let iterator=index_arc.get_iterator(None,0,1,false,false,vec![]).await;
@@ -1001,7 +1007,7 @@ use seekstorm::index::Close;
 use std::path::Path;
 
 let index_path=Path::new("C:/index/");
-let mut index_arc=open_index(index_path,false).await.unwrap();
+let mut index_arc=open_index(index_path).await.unwrap();
 
 index_arc.close().await;
 
@@ -1099,7 +1105,7 @@ use seekstorm::index::{IndexDocuments,open_index};
 use seekstorm::commit::Commit;
 
 let index_path=Path::new("C:/index/");
-let index_arc=open_index(index_path,false).await.unwrap();
+let index_arc=open_index(index_path).await.unwrap();
 
 let documents_json = r#"
 [{"title":"title1 test","body":"body1","url":"url1","town":"Berlin"},
@@ -1127,7 +1133,7 @@ use seekstorm::highlighter::{Highlight,highlighter};
 use std::collections::HashSet;
 
 let index_path=Path::new("C:/index/");
-let index_arc=open_index(index_path,false).await.unwrap();
+let index_arc=open_index(index_path).await.unwrap();
 let query="test".to_string();
 let query_vector=None;
 let search_mode=SearchMode::Lexical;
@@ -1209,7 +1215,7 @@ create index
         spelling_correction: None,
         query_completion: None,
         clustering: Clustering::None,
-        inference: Inference::Model2Vec { model: Model::PotionBase2M, chunk_size: 1000, quantization: Quantization::I8 },
+        inference: Inference::Model2Vec { model: Model::PotionBase2M, chunk_size: 1000, quantization: Quantization::ScalarQuantizationI8 },
     };
     
     let segment_number_bits1=11;
@@ -1231,7 +1237,7 @@ index documents/vectors
 
     // open index
     let index_path=Path::new("tests/index_test/");
-    let index_arc=open_index(index_path,false).await.unwrap(); 
+    let index_arc=open_index(index_path).await.unwrap(); 
 
     // index documents
     let documents_json = r#"
@@ -1263,7 +1269,7 @@ query documents/vectors
 
    // open index
     let index_path=Path::new("tests/index_test/");
-    let index_arc=open_index(index_path,false).await.unwrap(); 
+    let index_arc=open_index(index_path).await.unwrap(); 
 
     let result=index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 3);
@@ -1355,7 +1361,7 @@ index documents/vectors
 
     // open index
     let index_path=Path::new("tests/index_test/");
-    let index_arc=open_index(index_path,false).await.unwrap(); 
+    let index_arc=open_index(index_path).await.unwrap(); 
 
     // index documents
     let documents_json = r#"
@@ -1389,7 +1395,7 @@ query documents/vectors
 
   // open index
     let index_path=Path::new("tests/index_test/");
-    let index_arc=open_index(index_path,false).await.unwrap(); 
+    let index_arc=open_index(index_path).await.unwrap(); 
 
     let result=index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 3);
@@ -1467,7 +1473,7 @@ create index
         spelling_correction: None,
         query_completion: None,
         clustering: Clustering::Auto,
-        inference: Inference::External { dimensions: 128, precision: Precision::F32, quantization: Quantization::I8, similarity:VectorSimilarity::Euclidean },
+        inference: Inference::External { dimensions: 128, precision: Precision::F32, quantization: Quantization::ScalarQuantizationI8, similarity:VectorSimilarity::Euclidean },
     };
     
     let segment_number_bits1=11;
@@ -1491,7 +1497,7 @@ index documents/vectors
 
     // open index
     let index_path=Path::new("tests/index_test/");
-    let index_arc=open_index(index_path,false).await.unwrap(); 
+    let index_arc=open_index(index_path).await.unwrap(); 
 
     // index documents 
     // download data from http://corpus-texmex.irisa.fr/
@@ -1523,7 +1529,7 @@ query documents/vectors
 
     // open index
     let index_path=Path::new("tests/index_test/");
-    let index_arc=open_index(index_path,false).await.unwrap(); 
+    let index_arc=open_index(index_path).await.unwrap(); 
 
     let result=index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 1000_000);
@@ -1834,7 +1840,7 @@ Are you missing something? Let us know via issue or discussions.
 **New features**
 
 * ✅ Native vector search
-* Adding TurboQuant (TQ) to vector search
+* ✅ TurboQuant (TQ) for vector search
 * Geocoding, reverse geocoding, GeoJSON
 * Model Context Protocol (MCP) server for Retrieval Augmented Generation (RAG)
 * Split of storage and compute

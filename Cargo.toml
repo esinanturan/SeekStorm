@@ -1,6 +1,6 @@
 [package]
 name = "seekstorm"
-version = "3.0.2"
+version = "3.1.0"
 authors = ["Wolf Garbe <wolf.garbe@seekstorm.com>"]
 license = "Apache-2.0"
 categories = ["database-implementations", "data-structures"]
@@ -39,7 +39,7 @@ tokio = { version = "1.52.1", features = ["full"] }
 base64 = "0.22.1"
 num-format = "0.4.4"
 ahash ={ version = "0.8.12", features = ["serde"]}
-rand = "0.10.1"
+rand = { version = "0.10.1", features = ["chacha"]}
 futures = "0.3.32"
 num = "0.4.3"
 num-derive = "0.4.2"

@@ -72,7 +72,7 @@ async fn test_01_create_index() {
 async fn test_02_index_document() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     // index document
     let document_json = r#"
@@ -102,7 +102,7 @@ async fn test_02_index_document() {
 async fn test_03_get_iterator() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     let result = index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 4);
@@ -144,7 +144,7 @@ async fn test_03_get_iterator() {
 async fn test_04_query_index() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     let result = index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 4);
@@ -217,7 +217,7 @@ async fn test_04_query_index() {
 async fn test_05_empty_query() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     let result = index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 4);
@@ -341,7 +341,7 @@ async fn test_05_empty_query() {
 async fn test_06_clear_index() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     let result = index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 4);
@@ -401,7 +401,7 @@ async fn test_06_clear_index() {
 async fn test_07_get_document() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     let result = index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 1);
@@ -434,7 +434,7 @@ async fn test_07_get_document() {
 async fn test_08_delete_document() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     let result = index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 1);
@@ -527,7 +527,7 @@ async fn test_09_create_index_vector_internal() {
         inference: Inference::Model2Vec {
             model: Model::PotionBase2M,
             chunk_size: 1000,
-            quantization: Quantization::I8,
+            quantization: Quantization::ScalarQuantizationI8,
         },
     };
 
@@ -555,7 +555,7 @@ async fn test_09_create_index_vector_internal() {
 async fn test_10_index_document_vector_internal() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     // index documents
     let documents_json = r#"
@@ -579,7 +579,7 @@ async fn test_10_index_document_vector_internal() {
 async fn test_11_query_index_vector_internal() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     let result = index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 3);
@@ -678,7 +678,7 @@ async fn test_12_create_index_vector_external() {
 async fn test_13_index_document_vector_external() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     // index documents
     let documents_json = r#"
@@ -702,7 +702,7 @@ async fn test_13_index_document_vector_external() {
 async fn test_14_query_index_vector_external() {
     // open index
     let index_path = Path::new("tests/index_test/");
-    let index_arc = open_index(index_path, false).await.unwrap();
+    let index_arc = open_index(index_path).await.unwrap();
 
     let result = index_arc.read().await.indexed_doc_count().await;
     assert_eq!(result, 3);

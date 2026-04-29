@@ -371,7 +371,6 @@ impl Index {
     ///
     /// Returns:
     /// * `Vec<u8>`: The file content as a byte vector.
-    ///
     pub async fn get_file(&self, doc_id: usize) -> Result<Vec<u8>, String> {
         let shard_id = doc_id % self.shard_number;
         let doc_id_shard = doc_id / self.shard_number;

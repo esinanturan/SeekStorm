@@ -6,9 +6,9 @@ use crate::{
     search::ResultObject,
     utils::decode_bytes_from_base64_string,
     vector_similarity::{
-        AnnMode, QuantizedVector, QuerySimd, normalize_f32, normalize_f32_avx2,
-        quantize_avx2_f32_to_i8, quantize_f32_to_i8, similarity_avx2_embedding,
-        similarity_avx2_embedding_view, similarity_embedding, similarity_embedding_view,
+        AnnMode, QuantizedVector, QuerySimd, normalize_f32, normalize_f32_avx2, quantize_f32_to_i8,
+        quantize_f32_to_i8_avx2, similarity_embedding, similarity_embedding_avx2,
+        similarity_embedding_view, similarity_embedding_view_avx2,
     },
 };
 use ahash::AHashSet;
@@ -67,7 +67,7 @@ pub(crate) struct VectorHeader {
     pub field_id: u32,
     pub chunk_id: u32,
     pub scale: f32,
-    pub norm: i32,
+    pub norm: f32,
     pub zero_point: i16,
     pub sum_q: i32,
 }
@@ -226,8 +226,20 @@ pub(crate) fn read_record(
 /// Quantization method for embeddings.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Deserialize, Serialize, ToSchema)]
 pub enum Quantization {
-    /// Scalar quantization f32 to i8 (8 bit per dimension) with scale factor 127.0
-    I8,
+    /// Affine Scalar Quantization (SQ) f32 to i8 (8 bit per dimension).
+    /// Affine quantization (or asymmetric quantization) maps high-precision floating-point numbers (e.g., FP32) to lower-precision integers (e.g., INT8)
+    /// by linearly transforming them using a scaling factor and a zero-point offset.
+    ScalarQuantizationI8,
+    /// TurboQuant Quantization (TQ) f32 to i8 (8 bit per dimension).
+    /// SeekStorms implementation uses Fast Walsh-Hadamard Transform (FWHT) instead of Gram-Schmidt orthogonalization, and Quantized Johnson-Lindenstrauss (QJL) transformation.
+    /// TurboQuant is generally considered superior to traditional Product Quantization (PQ) for high-dimensional, nearest neighbor search.
+    /// TurboQuant provides higher recall, faster (nearly zero) indexing time, and better compression ratios compared to standard PQ techniques.
+    /// PQ requires a costly "training" phase to generate codebooks, which is impractical for real-time search.
+    /// TurboQuant uses random rotations to achieve near-optimal scalar quantization on the fly, eliminating this training time.
+    /// &#x26A0; **CAUTION**: TurboQuant is NOT always better than Scalar Quantization.
+    /// For SIFT1M, SeekStorms affine scalar quantization (recall@10=100%) is better than TurboQuant (recall@10=97.26%).
+    /// Those vectors have less than 256 distinct values, which SeekStorms affine Scalar Quantization preserves distortionlessly, while TurboQuant introduces additional distortion due to the random rotations.
+    TurboQuantI8,
     /// no quantization, keep f32
     #[default]
     None,
@@ -237,7 +249,8 @@ impl fmt::Display for Quantization {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Quantization::None => write!(f, "None"),
-            Quantization::I8 => write!(f, "I8"),
+            Quantization::ScalarQuantizationI8 => write!(f, "ScalarQuantizationI8"),
+            Quantization::TurboQuantI8 => write!(f, "TurboQuantI8"),
         }
     }
 }
@@ -245,6 +258,8 @@ impl fmt::Display for Quantization {
 /// Predefined model type for embeddings.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, ToSchema)]
 pub enum Model {
+    /// nomic-ai/CodeRankEmbed, 16M parameters, 256 dimensions, English only, code retrieval.
+    PotionCode16M,
     /// bge-base-en-v1.5: 512 dimensions, 32.3M parameters, English only, general purpose
     PotionBase32M,
     /// bge-base-multilingual-v1.5: 256 dimensions, 128M parameters, multilingual, general purpose
@@ -488,9 +503,11 @@ impl Shard {
 
         let embeddings = model.encode(&self.chunks_string);
         for (i, embedding) in embeddings.iter().enumerate() {
-            let embedding = if self.quantization == Quantization::I8 {
+            let embedding = if self.quantization == Quantization::ScalarQuantizationI8
+                || self.quantization == Quantization::TurboQuantI8
+            {
                 if self.is_avx2 {
-                    unsafe { quantize_avx2_f32_to_i8(embedding) }
+                    unsafe { quantize_f32_to_i8_avx2(embedding) }
                 } else {
                     quantize_f32_to_i8(embedding)
                 }
@@ -507,7 +524,7 @@ impl Shard {
                 field_id: self.chunks_meta[i].1,
                 chunk_id: self.chunks_meta[i].2,
                 scale: 0.0,
-                norm: 0,
+                norm: 0.0,
                 zero_point: 0,
                 sum_q: 0,
                 embedding,
@@ -574,25 +591,37 @@ impl Shard {
                                 }
                             };
 
-                            let (scale, norm, zero_point, sum_q) = if self.quantization
-                                == Quantization::I8
+                            let (scale, norm, zero_point, sum_q) = if (self.quantization
+                                == Quantization::ScalarQuantizationI8
+                                || self.quantization == Quantization::TurboQuantI8)
                                 && let Embedding::F32(ref fvecs) = embedding
                             {
-                                match self.vector_similarity {
-                                    VectorSimilarity::Cosine => {
-                                        embedding = if self.is_avx2 {
-                                            unsafe { quantize_avx2_f32_to_i8(fvecs) }
-                                        } else {
-                                            quantize_f32_to_i8(fvecs)
-                                        };
-                                        (1.0, 0, 0, 0)
+                                match (self.vector_similarity, self.quantization, self.is_avx2) {
+                                    (
+                                        VectorSimilarity::Cosine,
+                                        Quantization::ScalarQuantizationI8,
+                                        true,
+                                    ) => {
+                                        embedding = unsafe { quantize_f32_to_i8_avx2(fvecs) };
+
+                                        (1.0, 0.0, 0, 0)
                                     }
-                                    VectorSimilarity::Dot => {
-                                        let quantized_vector = if self.is_avx2 {
-                                            QuantizedVector::new_scale_avx2(fvecs)
-                                        } else {
-                                            QuantizedVector::new_scale(fvecs)
-                                        };
+                                    (
+                                        VectorSimilarity::Cosine,
+                                        Quantization::ScalarQuantizationI8,
+                                        false,
+                                    ) => {
+                                        embedding = quantize_f32_to_i8(fvecs);
+                                        (1.0, 0.0, 0, 0)
+                                    }
+
+                                    (
+                                        VectorSimilarity::Dot,
+                                        Quantization::ScalarQuantizationI8,
+                                        true,
+                                    ) => {
+                                        let quantized_vector =
+                                            QuantizedVector::new_scale_avx2(fvecs);
                                         embedding = Embedding::I8(quantized_vector.data);
                                         (
                                             quantized_vector.scale,
@@ -601,20 +630,33 @@ impl Shard {
                                             quantized_vector.sum_q,
                                         )
                                     }
-                                    VectorSimilarity::Euclidean => {
-                                        let quantized_vector = if self.is_avx2 {
+                                    (
+                                        VectorSimilarity::Dot,
+                                        Quantization::ScalarQuantizationI8,
+                                        false,
+                                    ) => {
+                                        let quantized_vector = QuantizedVector::new_scale(fvecs);
+                                        embedding = Embedding::I8(quantized_vector.data);
+                                        (
+                                            quantized_vector.scale,
+                                            quantized_vector.norm,
+                                            quantized_vector.zero_point,
+                                            quantized_vector.sum_q,
+                                        )
+                                    }
+
+                                    (
+                                        VectorSimilarity::Euclidean,
+                                        Quantization::ScalarQuantizationI8,
+                                        true,
+                                    ) => {
+                                        let quantized_vector =
                                             QuantizedVector::new_scale_norm_affine_avx2(
                                                 &mut self.min_vector_value,
                                                 &mut self.max_vector_value,
                                                 fvecs,
-                                            )
-                                        } else {
-                                            QuantizedVector::new_scale_norm_affine(
-                                                &mut self.min_vector_value,
-                                                &mut self.max_vector_value,
-                                                fvecs,
-                                            )
-                                        };
+                                            );
+
                                         embedding = Embedding::I8(quantized_vector.data);
                                         (
                                             quantized_vector.scale,
@@ -623,9 +665,56 @@ impl Shard {
                                             quantized_vector.sum_q,
                                         )
                                     }
+
+                                    (_, Quantization::TurboQuantI8, true) => {
+                                        let quantized_vector =
+                                            self.turbo_quant.quantize_f32_i8_avx2(fvecs);
+
+                                        embedding = Embedding::I8(quantized_vector.data);
+                                        (
+                                            quantized_vector.scale,
+                                            quantized_vector.norm,
+                                            quantized_vector.zero_point,
+                                            quantized_vector.sum_q,
+                                        )
+                                    }
+
+                                    (
+                                        VectorSimilarity::Euclidean,
+                                        Quantization::ScalarQuantizationI8,
+                                        false,
+                                    ) => {
+                                        let quantized_vector =
+                                            QuantizedVector::new_scale_norm_affine(
+                                                &mut self.min_vector_value,
+                                                &mut self.max_vector_value,
+                                                fvecs,
+                                            );
+                                        embedding = Embedding::I8(quantized_vector.data);
+                                        (
+                                            quantized_vector.scale,
+                                            quantized_vector.norm,
+                                            quantized_vector.zero_point,
+                                            quantized_vector.sum_q,
+                                        )
+                                    }
+
+                                    (_, Quantization::TurboQuantI8, false) => {
+                                        let quantized_vector =
+                                            self.turbo_quant.quantize_f32_i8(fvecs);
+
+                                        embedding = Embedding::I8(quantized_vector.data);
+                                        (
+                                            quantized_vector.scale,
+                                            quantized_vector.norm,
+                                            quantized_vector.zero_point,
+                                            quantized_vector.sum_q,
+                                        )
+                                    }
+                                    (_, Quantization::None, _) => (0.0, 0.0, 0, 0),
                                 }
                             } else {
-                                (0.0, 0, 0, 0)
+                                (0.0, 0.0, 0, 0)
                             };
 
                             let record = ParentMedoid {
@@ -671,25 +760,40 @@ impl Shard {
                                 }
                             };
 
-                            let (scale, norm, zero_point, sum_q) = if self.quantization
-                                == Quantization::I8
+                            let (scale, norm, zero_point, sum_q) = if (self.quantization
+                                == Quantization::ScalarQuantizationI8
+                                || self.quantization == Quantization::TurboQuantI8)
                                 && let Embedding::F32(ref fvecs) = embedding
                             {
-                                match self.vector_similarity {
-                                    VectorSimilarity::Cosine => {
-                                        embedding = if self.is_avx2 {
-                                            unsafe { quantize_avx2_f32_to_i8(fvecs) }
-                                        } else {
-                                            quantize_f32_to_i8(fvecs)
-                                        };
-                                        (1.0, 0, 0, 0)
+                                match (self.vector_similarity, self.quantization, self.is_avx2) {
+                                    (
+                                        VectorSimilarity::Cosine,
+                                        Quantization::ScalarQuantizationI8,
+                                        true,
+                                    ) => {
+                                        embedding = unsafe { quantize_f32_to_i8_avx2(fvecs) };
+
+                                        (1.0, 0.0, 0, 0)
                                     }
-                                    VectorSimilarity::Dot => {
-                                        let quantized_vector = if self.is_avx2 {
-                                            QuantizedVector::new_scale_avx2(fvecs)
-                                        } else {
-                                            QuantizedVector::new_scale(fvecs)
-                                        };
+
+                                    (
+                                        VectorSimilarity::Cosine,
+                                        Quantization::ScalarQuantizationI8,
+                                        false,
+                                    ) => {
+                                        embedding = quantize_f32_to_i8(fvecs);
+
+                                        (1.0, 0.0, 0, 0)
+                                    }
+
+                                    (
+                                        VectorSimilarity::Dot,
+                                        Quantization::ScalarQuantizationI8,
+                                        true,
+                                    ) => {
+                                        let quantized_vector =
+                                            QuantizedVector::new_scale_avx2(fvecs);
+
                                         embedding = Embedding::I8(quantized_vector.data);
                                         (
                                             quantized_vector.scale,
@@ -698,20 +802,33 @@ impl Shard {
                                             quantized_vector.sum_q,
                                         )
                                     }
-                                    VectorSimilarity::Euclidean => {
-                                        let quantized_vector = if self.is_avx2 {
+                                    (
+                                        VectorSimilarity::Dot,
+                                        Quantization::ScalarQuantizationI8,
+                                        false,
+                                    ) => {
+                                        let quantized_vector = QuantizedVector::new_scale(fvecs);
+
+                                        embedding = Embedding::I8(quantized_vector.data);
+                                        (
+                                            quantized_vector.scale,
+                                            quantized_vector.norm,
+                                            quantized_vector.zero_point,
+                                            quantized_vector.sum_q,
+                                        )
+                                    }
+
+                                    (
+                                        VectorSimilarity::Euclidean,
+                                        Quantization::ScalarQuantizationI8,
+                                        true,
+                                    ) => {
+                                        let quantized_vector =
                                             QuantizedVector::new_scale_norm_affine_avx2(
                                                 &mut self.min_vector_value,
                                                 &mut self.max_vector_value,
                                                 fvecs,
-                                            )
-                                        } else {
-                                            QuantizedVector::new_scale_norm_affine(
-                                                &mut self.min_vector_value,
-                                                &mut self.max_vector_value,
-                                                fvecs,
-                                            )
-                                        };
+                                            );
                                         embedding = Embedding::I8(quantized_vector.data);
                                         (
                                             quantized_vector.scale,
@@ -720,9 +837,57 @@ impl Shard {
                                             quantized_vector.sum_q,
                                         )
                                     }
+
+                                    (_, Quantization::TurboQuantI8, true) => {
+                                        let quantized_vector =
+                                            self.turbo_quant.quantize_f32_i8_avx2(fvecs);
+
+                                        embedding = Embedding::I8(quantized_vector.data);
+                                        (
+                                            quantized_vector.scale,
+                                            quantized_vector.norm,
+                                            quantized_vector.zero_point,
+                                            quantized_vector.sum_q,
+                                        )
+                                    }
+
+                                    (
+                                        VectorSimilarity::Euclidean,
+                                        Quantization::ScalarQuantizationI8,
+                                        false,
+                                    ) => {
+                                        let quantized_vector =
+                                            QuantizedVector::new_scale_norm_affine(
+                                                &mut self.min_vector_value,
+                                                &mut self.max_vector_value,
+                                                fvecs,
+                                            );
+
+                                        embedding = Embedding::I8(quantized_vector.data);
+                                        (
+                                            quantized_vector.scale,
+                                            quantized_vector.norm,
+                                            quantized_vector.zero_point,
+                                            quantized_vector.sum_q,
+                                        )
+                                    }
+
+                                    (_, Quantization::TurboQuantI8, false) => {
+                                        let quantized_vector =
+                                            self.turbo_quant.quantize_f32_i8(fvecs);
+
+                                        embedding = Embedding::I8(quantized_vector.data);
+                                        (
+                                            quantized_vector.scale,
+                                            quantized_vector.norm,
+                                            quantized_vector.zero_point,
+                                            quantized_vector.sum_q,
+                                        )
+                                    }
+                                    (_, Quantization::None, _) => (0.0, 0.0, 0, 0),
                                 }
                             } else {
-                                (0.0, 0, 0, 0)
+                                (0.0, 0.0, 0, 0)
                             };
 
                             let record = ParentMedoid {
@@ -754,7 +919,8 @@ impl Shard {
         if self.is_last_level_incomplete {
             let vector_dimensions = self.vector_dimensions;
             let vector_type = match self.quantization {
-                Quantization::I8 => Precision::I8,
+                Quantization::ScalarQuantizationI8 => Precision::I8,
+                Quantization::TurboQuantI8 => Precision::I8,
                 _ => self.vector_precision,
             };
             let vector_size = size_of::<VectorHeader>()
@@ -909,7 +1075,7 @@ impl Shard {
 pub(crate) trait SearchVectorShard {
     async fn search_vector_shard(
         &self,
-        query_vector: Option<(Embedding, f32, i32, i16, i32)>,
+        query_vector: Option<(Embedding, f32, f32, i16, i32)>,
         length: usize,
         include_uncommitted: bool,
         similarity_threshold: Option<f32>,
@@ -937,7 +1103,7 @@ impl Shard {
         query_simd: &QuerySimd,
         query_embedding: &Embedding,
         scale: f32,
-        norm: i32,
+        norm: f32,
         zero_point: i16,
         sum_q: i32,
         vector_similarity: &VectorSimilarity,
@@ -965,11 +1131,12 @@ impl Shard {
                 };
                 let similarity = if self.is_avx2 {
                     unsafe {
-                        similarity_avx2_embedding(
+                        similarity_embedding_avx2(
                             query_simd,
                             &record.embedding,
                             scale_norm,
                             *vector_similarity,
+                            self.quantization,
                         )
                     }
                 } else {
@@ -978,6 +1145,7 @@ impl Shard {
                         &record.embedding,
                         scale_norm,
                         *vector_similarity,
+                        self.quantization,
                     )
                 };
                 let doc_id = (level_id << 16) | (record.doc_id as usize);
@@ -998,7 +1166,7 @@ impl Shard {
 impl SearchVectorShard for ShardArc {
     async fn search_vector_shard(
         &self,
-        query_vector: Option<(Embedding, f32, i32, i16, i32)>,
+        query_vector: Option<(Embedding, f32, f32, i16, i32)>,
         length: usize,
         include_uncommitted: bool,
         similarity_threshold: Option<f32>,
@@ -1035,7 +1203,8 @@ impl SearchVectorShard for ShardArc {
         let vector_similarity = shard_ref.vector_similarity;
         let vector_dimensions = shard_ref.vector_dimensions;
         let vector_type = match shard_ref.quantization {
-            Quantization::I8 => Precision::I8,
+            Quantization::ScalarQuantizationI8 => Precision::I8,
+            Quantization::TurboQuantI8 => Precision::I8,
             _ => shard_ref.vector_precision,
         };
         let vector_size = size_of::<VectorHeader>()
@@ -1130,11 +1299,12 @@ impl SearchVectorShard for ShardArc {
                     };
                     let similarity = if shard_ref.is_avx2 {
                         unsafe {
-                            similarity_avx2_embedding_view(
+                            similarity_embedding_view_avx2(
                                 &query_simd,
                                 &medoid_record.embedding,
                                 scale_norm,
                                 vector_similarity,
+                                shard_ref.quantization,
                             )
                         }
                     } else {
@@ -1143,6 +1313,7 @@ impl SearchVectorShard for ShardArc {
                             &medoid_record.embedding,
                             scale_norm,
                             vector_similarity,
+                            shard_ref.quantization,
                         )
                     };
 
@@ -1216,11 +1387,12 @@ impl SearchVectorShard for ShardArc {
                                 None
                             };
                             let similarity = if shard_ref.is_avx2 {
-                                similarity_avx2_embedding_view(
+                                similarity_embedding_view_avx2(
                                     &query_simd,
                                     &record.embedding,
                                     scale_norm,
                                     vector_similarity,
+                                    shard_ref.quantization,
                                 )
                             } else {
                                 similarity_embedding_view(
@@ -1228,6 +1400,7 @@ impl SearchVectorShard for ShardArc {
                                     &record.embedding,
                                     scale_norm,
                                     vector_similarity,
+                                    shard_ref.quantization,
                                 )
                             };
 

@@ -173,7 +173,7 @@ use seekstorm::index::{IndexDocuments,open_index};
 use seekstorm::commit::Commit;
 
 let index_path=Path::new("C:/index/");
-let index_arc=open_index(index_path,false).await.unwrap();
+let index_arc=open_index(index_path).await.unwrap();
 
 let documents_json = r#"
 [{"title":"title1 test","body":"body1","url":"url1","town":"Berlin"},
@@ -213,7 +213,7 @@ use seekstorm::search::QueryFacet;
 use seekstorm::index::{IndexArc,open_index};
 
 let index_path=Path::new("C:/index/");
-let index_arc=open_index(index_path,false).await.unwrap();
+let index_arc=open_index(index_path).await.unwrap();
 
 let query_facets = vec![
     QueryFacet::String16 {
@@ -294,7 +294,7 @@ use std::path::Path;
 use std::collections::HashSet;
 
 let index_path=Path::new("C:/index/");
-let index_arc=open_index(index_path,false).await.unwrap();
+let index_arc=open_index(index_path).await.unwrap();
 
 let query="test".to_string();
 let query_vector=None;

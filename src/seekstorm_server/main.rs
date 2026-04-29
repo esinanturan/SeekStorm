@@ -1,5 +1,7 @@
+#![recursion_limit = "256"]
 #![crate_name = "seekstorm_server"]
 #![doc(html_logo_url = "http://seekstorm.com/assets/logo.svg")]
+#![allow(clippy::approx_constant)]
 
 //! # `seekstorm_server`
 //! **SeekStorm** is an open-source, sub-millisecond full-text search library & multi-tenancy server implemented in Rust.<br>

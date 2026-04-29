@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-04-29
+
+### Added
+
+- [TurboQuant](https://en.wikipedia.org/wiki/TurboQuant) (TQ) quantization for vector search added.  
+  TurboQuant reduces the quantization error (rounding errors with different directions might change the ratio between dimensions) with the following benefits:
+  - requires no training in contrast to Product Quantization (PQ),
+  - provides better recall compared to Product Quantization (PQ), 
+  - allows lower nprobe with improved query latency in ANN search, 
+  - allows higher vector quantization/compression rates.
+- SeekStorm's TurboQuant implementation uses the following techniques:
+  - SIMD/AVX2 for acceleration.
+  - Fast Walsh-Hadamard Transform (FWHT) instead of Gram-Schmidt orthogonalization.
+  - Quantized Johnson-Lindenstrauss (QJL) transformation.
+- Examples added to REST API documentation.
+- [potion-code-16M from MinishLab](https://huggingface.co/minishlab/potion-code-16M) added to Inference::Model2Vec. 
+  - potion-code-16M is a fast static code embedding model optimized for code retrieval tasks.
+
+### Improved
+
+- Norm changed from i32 to f32. More norm calculation moved from search time to index time.
+
+### Improved
+
+- REST API documentation improved.
+
+### Changed
+
+- REST API url updated.
+- README.md updated.
+
 ## [3.0.2] - 2026-04-23
 
 ### Added
@@ -26,14 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - index: removed duplicate use std::sync::LazyLock;
 
-## [3.0.0] - 2026-04-19
+## [3.0.0] - 2026-04-20
 
 ### Added
 
 - Introducing native vector search: SeekStorm now uses [**two separate, first-class, native index architectures**](ARCHITECTURE.md#architecture) for **vector search** and **keyword search**.
     * **Multi-Vector indexing**: both from multiple fields and from multiple chunks per field.
     * Generate and index embeddings from any text document field.
-    * All **field filters** are directly active **during vector search**, not just as post-search filtering step.
+    * All **field filters** and **facet filter** are directly active **during vector search**, not just as post-search filtering step.
     * **Per query choice** of lexical search, **vector search**, or **hybrid search**.
     * Configurable **chunker** that respects **sentence boundaries** and **Unicode segmentation** for multilingual text.
     * Sharded and leveled IVF index
@@ -97,7 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
           * Dot 
           * Euclidean 
           
-- A new index info card is displayed after server start and ingest console command.
+- A new index info card is displayed after open index and ingest.
 - Rate limiter for REST API implemented.
 
 ### Changed

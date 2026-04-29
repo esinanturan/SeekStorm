@@ -421,9 +421,6 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
 
                     match command
                     {
-
-
-
                         "searchsift" =>
                         {
                             println!("search sift start");
@@ -439,7 +436,7 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                     let similarity_threshold=None;
                                     let field_filter=Vec::new();
                                     let fields_hashset=HashSet::new();
-                                    let search_mode=SearchMode::Vector { similarity_threshold , ann_mode:AnnMode::Nprobe(16)};
+                                    let search_mode=SearchMode::Vector { similarity_threshold , ann_mode: AnnMode::Nprobe(16)};
 
                                     let mut search_time_sum=0;
                                     let mut results_sum=0;
@@ -517,7 +514,9 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                         let indexed_vector_count=index_arc.read().await.indexed_vector_count().await;
                                         let indexed_cluster_count=index_arc.read().await.indexed_cluster_count().await;
 
-                                        println!("QueryMode: {:?} Search time: {} µs  result count {} result count total: {} clusters observed: {:.2}% ({} of {}) vectors observed: {:.2}% ({} of {}) recall: {:.2}%",
+                                        println!("Inference {:?} Similarity {:?} QueryMode: {:?} Search time: {} µs  result count {} result count total: {} clusters observed: {:.2}% ({} of {}) vectors observed: {:.2}% ({} of {}) recall: {:.2}%",
+                                        index_arc.read().await.meta.inference,
+                                        index_arc.read().await.vector_similarity,
                                         search_mode,
                                          (search_time_sum as usize/1000/queries_len).to_formatted_string(&Locale::en), results_sum.to_formatted_string(&Locale::en), result_count_total_sum.to_formatted_string(&Locale::en),
                                         (observed_cluster_count_sum as f64) / queries_len as f64 / (indexed_cluster_count as f64) * 100.0,(observed_cluster_count_sum/queries_len).to_formatted_string(&Locale::en) , indexed_cluster_count.to_formatted_string(&Locale::en),
@@ -755,7 +754,7 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                     None,
                                     false,
                                     Clustering::Auto,
-                                    Inference::External { dimensions: 128, precision: Precision::F32, quantization: Quantization::I8,similarity:VectorSimilarity::Euclidean } ,
+                                    Inference::External { dimensions: 128, precision: Precision::F32, quantization: Quantization::ScalarQuantizationI8,similarity:VectorSimilarity::Euclidean } ,
                                 ).await;
 
                                 let index_id=0;
@@ -878,7 +877,7 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                                         None,
                                                         false,
                                                         Clustering::Auto,
-                                                        Inference::Model2Vec { model: Model::PotionBase2M, chunk_size: 1000, quantization: Quantization::I8 },
+                                                        Inference::Model2Vec { model: Model::PotionBase2M, chunk_size: 1000, quantization: Quantization::TurboQuantI8 },
                                                     ).await
                                                 } else {
                                                     0

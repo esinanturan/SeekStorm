@@ -45,7 +45,7 @@ use crate::{
         write_f64, write_i8, write_i16, write_i32, write_i64, write_u32, write_u64,
     },
     vector::{Inference, Model, Precision, Quantization, VectorHeader, read_min_max},
-    vector_similarity::VectorSimilarity,
+    vector_similarity::{TurboQuant, VectorSimilarity},
 };
 
 #[cfg(all(target_feature = "aes", target_feature = "sse2", feature = "gx"))]
@@ -881,7 +881,7 @@ pub enum FrequentwordType {
     },
 }
 
-/// Defines spelling correction (fuzzy search) settings for an index.
+/// Defines spelling correction (fuzzy search) and dictionary generation settings for an index.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct SpellingCorrection {
     /// The edit distance thresholds for suggestions: 1..2 recommended; higher values increase latency and memory consumption.
@@ -907,7 +907,7 @@ pub struct SpellingCorrection {
     pub max_dictionary_entries: usize,
 }
 
-/// Defines spelling correction (fuzzy search) settings for an index.
+/// Defines query completion generation for an index.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct QueryCompletion {
     /// Maximum number of completions to generate during indexing
@@ -1170,7 +1170,7 @@ pub struct Shard {
 
     /// Number of committed documents
     pub committed_doc_count: usize,
-    /// The index countains indexed, but uncommitted documents. Documents will either committed automatically once the number exceeds 64K documents, or once commit is invoked manually.
+    /// The index countains indexed, but uncommitted documents. Documents will either committed automatically once the number exceeds 64K documents **per shard** or once commit is invoked manually.
     pub(crate) uncommitted: bool,
 
     /// Indicates whether the index has been modified since the start.
@@ -1288,6 +1288,7 @@ pub struct Shard {
 
     pub(crate) min_vector_value: f32,
     pub(crate) max_vector_value: f32,
+    pub(crate) turbo_quant: TurboQuant,
 }
 
 /// The root object of the index. It contains all levels and all segments of the index.
@@ -1348,12 +1349,14 @@ pub struct Index {
     pub(crate) quantization: Quantization,
     /// The dimensions of the vectors: e.g. 64, 128, 256, 512, 1024, 768, 1536, 2048, 4096
     pub vector_dimensions: usize,
-    pub(crate) vector_similarity: VectorSimilarity,
+    /// Vector similarity function for approximate nearest neighbor (ANN) search: Cosine, Euclidean, DotProduct.
+    pub vector_similarity: VectorSimilarity,
     /// AVX2 support enabled
     pub is_avx2: bool,
     pub(crate) is_vector_indexing: bool,
     pub(crate) is_lexical_indexing: bool,
     pub(crate) chunk_size: usize,
+    pub(crate) turbo_quant: TurboQuant,
 }
 
 ///SynonymItem is a vector of tuples: (synonym term, (64-bit synonym term hash, 64-bit synonym term hash))
@@ -1714,6 +1717,14 @@ pub(crate) async fn create_index_root(
                                 *quantization,
                                 VectorSimilarity::Cosine,
                             ),
+                            Model::PotionCode16M => (
+                                0,
+                                "minishlab/potion-code-16M",
+                                Precision::F32,
+                                chunk_size,
+                                *quantization,
+                                VectorSimilarity::Cosine,
+                            ),
                         }
                     }
                     Inference::Model2VecCustom {
@@ -1784,6 +1795,12 @@ pub(crate) async fn create_index_root(
                 )
             };
 
+            let turbo_quant = if quantization == Quantization::TurboQuantI8 {
+                TurboQuant::new(vector_dimensions, 1234)
+            } else {
+                TurboQuant::new(0, 1234)
+            };
+
             let mut shard_vec: Vec<Arc<RwLock<Shard>>> = Vec::new();
             let mut shard_queue = VecDeque::<usize>::new();
             if serialize_schema {
@@ -1793,6 +1810,7 @@ pub(crate) async fn create_index_root(
                     let index_path_clone2 = index_path_clone.clone();
                     let meta_clone = meta.clone();
                     let schema_clone = schema.clone();
+                    let turbo_quant_clone = turbo_quant.clone();
                     result_object_list.push(tokio::spawn(async move {
                         let shard_path = index_path_clone2.join("shards").join(i.to_string());
                         let mut shard_meta = meta_clone.clone();
@@ -1816,6 +1834,7 @@ pub(crate) async fn create_index_root(
                         shard.vector_similarity = vector_similarity;
                         shard.is_avx2 = *IS_AVX2;
                         shard.chunk_size = chunk_size;
+                        shard.turbo_quant = turbo_quant_clone;
 
                         let shard_arc = Arc::new(RwLock::new(shard));
                         (shard_arc, i)
@@ -1896,6 +1915,7 @@ pub(crate) async fn create_index_root(
                 is_vector_indexing,
                 is_lexical_indexing,
                 chunk_size,
+                turbo_quant,
             };
 
             let file_len = index.index_file.metadata().unwrap().len();
@@ -2381,6 +2401,7 @@ pub(crate) fn create_shard(
                 chunk_size: 0,
                 min_vector_value: f32::MAX,
                 max_vector_value: f32::MIN,
+                turbo_quant: TurboQuant::new(0, 1234),
             };
 
             let file_len = index.index_file.metadata().unwrap().len();
@@ -3374,7 +3395,7 @@ pub(crate) async fn open_shard(
 /// Loads the index from disk into RAM or MMAP.
 /// * `index_path` - index path.  
 /// * `mute` - prevent emitting status messages (e.g. when using pipes for data interprocess communication).  
-pub async fn open_index(index_path: &Path, _mute: bool) -> Result<IndexArc, String> {
+pub async fn open_index(index_path: &Path) -> Result<IndexArc, String> {
     let start_time = Instant::now();
 
     match File::open(Path::new(index_path).join(META_FILENAME)) {
@@ -3434,7 +3455,8 @@ pub async fn open_index(index_path: &Path, _mute: bool) -> Result<IndexArc, Stri
                             let mut shard_queue = VecDeque::<usize>::new();
 
                             let vector_type = match index_arc.read().await.quantization {
-                                Quantization::I8 => Precision::I8,
+                                Quantization::ScalarQuantizationI8 => Precision::I8,
+                                Quantization::TurboQuantI8 => Precision::I8,
                                 _ => index_arc.read().await.vector_precision,
                             };
 
@@ -3477,9 +3499,13 @@ pub async fn open_index(index_path: &Path, _mute: bool) -> Result<IndexArc, Stri
                                 shard_arc.write().await.chunk_size =
                                     index_arc.read().await.chunk_size;
 
+                                shard_arc.write().await.turbo_quant =
+                                    index_arc.read().await.turbo_quant.clone();
+
                                 if shard_arc.read().await.is_vector_indexing
                                     && !shard_arc.read().await.vector_file_mmap.is_empty()
-                                    && shard_arc.read().await.quantization == Quantization::I8
+                                    && shard_arc.read().await.quantization
+                                        == Quantization::ScalarQuantizationI8
                                     && shard_arc.read().await.vector_similarity
                                         == VectorSimilarity::Euclidean
                                 {
@@ -4056,7 +4082,7 @@ impl Index {
         indexed_cluster_count
     }
 
-    /// Get number of index levels. One index level comprises 64K documents.
+    /// Get number of index levels. One index level comprises 64K documents **per shard**.
     pub async fn level_count(&self) -> usize {
         let mut level_count = 0;
         for shard in self.shard_vec.iter() {

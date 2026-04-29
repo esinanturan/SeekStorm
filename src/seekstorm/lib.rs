@@ -62,7 +62,7 @@
 //! use seekstorm::index::open_index;
 //! use std::path::Path;
 //! let index_path=Path::new("C:/index/");
-//! let index_arc=open_index(index_path,false).await.unwrap();
+//! let index_arc=open_index(index_path).await.unwrap();
 //! # });
 //! ```
 //! ### index document
@@ -71,7 +71,7 @@
 //! # use std::path::Path;
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let index_arc=open_index(index_path,false).await.unwrap();
+//! # let index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::index::IndexDocument;
 //! use seekstorm::index::FileType;
 //! let document_json = r#"
@@ -86,7 +86,7 @@
 //! # use std::path::Path;
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let index_arc=open_index(index_path,false).await.unwrap();
+//! # let index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::index::IndexDocuments;
 //! let documents_json = r#"
 //! [{"title":"title1 test","body":"body1","url":"url1"},
@@ -102,7 +102,7 @@
 //! # use std::path::Path;
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let index_arc=open_index(index_path,false).await.unwrap();
+//! # let index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::index::DeleteDocuments;
 //! let docid_vec=vec![1,2];
 //! index_arc.delete_documents(docid_vec).await;
@@ -114,7 +114,7 @@
 //! # use std::path::Path;
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let index_arc=open_index(index_path,false).await.unwrap();
+//! # let index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::search::QueryType;
 //! use seekstorm::index::DeleteDocumentsByQuery;
 //! let query="test".to_string();
@@ -134,7 +134,7 @@
 //! # use std::path::Path;
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let index_arc=open_index(index_path,false).await.unwrap();
+//! # let index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::index::UpdateDocuments;
 //! use seekstorm::commit::Commit;
 //! let id_document_vec_json = r#"
@@ -152,7 +152,7 @@
 //! # use std::path::Path;
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let index_arc=open_index(index_path,false).await.unwrap();
+//! # let index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::search::{Search, SearchMode, QueryType, ResultType, QueryRewriting};
 //! let query="test".to_string();
 //! let query_vector=None;
@@ -198,7 +198,7 @@
 //! # use std::path::Path;
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let index_arc=open_index(index_path,false).await.unwrap();
+//! # let index_arc=open_index(index_path).await.unwrap();
 //! use std::collections::HashSet;
 //! let doc_id=0;
 //! let highlighter=None;
@@ -213,7 +213,7 @@
 //! # tokio_test::block_on(async {
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let mut index_arc=open_index(index_path,false).await.unwrap();
+//! # let mut index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::ingest::IngestJson;
 //! use std::path::Path;
 //! let file_path=Path::new("wiki-articles.json");
@@ -261,7 +261,7 @@
 //! # tokio_test::block_on(async {
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let mut index_arc=open_index(index_path,false).await.unwrap();
+//! # let mut index_arc=open_index(index_path).await.unwrap();
 //! use std::path::Path;
 //! use seekstorm::ingest::IngestPdf;
 //! let file_path=Path::new("C:/Users/johndoe/Downloads");
@@ -273,7 +273,7 @@
 //! # tokio_test::block_on(async {
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let mut index_arc=open_index(index_path,false).await.unwrap();
+//! # let mut index_arc=open_index(index_path).await.unwrap();
 //! use std::path::Path;
 //! use seekstorm::ingest::IndexPdfFile;
 //! let file_path=Path::new("C:/test.pdf");
@@ -285,7 +285,7 @@
 //! # tokio_test::block_on(async {
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let mut index_arc=open_index(index_path,false).await.unwrap();
+//! # let mut index_arc=open_index(index_path).await.unwrap();
 //! use std::path::Path;
 //! use std::fs;
 //! use chrono::Utc;
@@ -302,7 +302,7 @@
 //! # use seekstorm::index::open_index;
 //! # use std::path::Path;
 //! # let index_path=Path::new("C:/index/");
-//! # let mut index_arc=open_index(index_path,false).await.unwrap();
+//! # let mut index_arc=open_index(index_path).await.unwrap();
 //! let doc_id=0;
 //! let _file=index_arc.read().await.get_file(doc_id).await.unwrap();
 //! # });
@@ -313,7 +313,7 @@
 //! # use seekstorm::index::open_index;
 //! # use std::path::Path;
 //! # let index_path=Path::new("C:/index/");
-//! # let mut index_arc=open_index(index_path,false).await.unwrap();
+//! # let mut index_arc=open_index(index_path).await.unwrap();
 //! index_arc.write().await.clear_index().await;
 //! # });
 //! ```
@@ -323,7 +323,7 @@
 //! # use seekstorm::index::open_index;
 //! # use std::path::Path;
 //! # let index_path=Path::new("C:/index/");
-//! # let mut index_arc=open_index(index_path,false).await.unwrap();
+//! # let mut index_arc=open_index(index_path).await.unwrap();
 //! index_arc.write().await.delete_index();
 //! # });
 //! ```
@@ -333,7 +333,7 @@
 //! # use seekstorm::index::open_index;
 //! # use std::path::Path;
 //! # let index_path=Path::new("C:/index/");
-//! # let mut index_arc=open_index(index_path,false).await.unwrap();
+//! # let mut index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::index::Close;
 //! index_arc.close().await;
 //! # });
@@ -395,7 +395,7 @@
 //! # use std::path::Path;
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let index_arc=open_index(index_path,false).await.unwrap();
+//! # let index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::index::IndexDocuments;
 //! use seekstorm::commit::Commit;
 //! use seekstorm::search::{QueryType, ResultType, QueryFacet, FacetFilter};
@@ -415,7 +415,7 @@
 //! # use std::path::Path;
 //! # use seekstorm::index::open_index;
 //! # let index_path=Path::new("C:/index/");
-//! # let index_arc=open_index(index_path,false).await.unwrap();
+//! # let index_arc=open_index(index_path).await.unwrap();
 //! use seekstorm::search::{QueryType, SearchMode, ResultType, QueryFacet, FacetFilter, QueryRewriting,Search};
 //! let query="test".to_string();
 //! let query_vector=None;

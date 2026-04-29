@@ -70,18 +70,23 @@ pub struct SearchRequestObject {
     /// True realtime search: include indexed, but uncommitted documents into search results.
     #[serde(default)]
     pub realtime: bool,
+    /// Specify field names where to create keyword-in-context fragments and highlight query terms.
     #[serde(default)]
     pub highlights: Vec<Highlight>,
     /// Specify field names where to search at querytime, whereas SchemaField.indexed is set at indextime. If empty then all indexed fields are searched.
     #[schema(required = false, example = json!(["title"]))]
     #[serde(default)]
     pub field_filter: Vec<String>,
+    /// Specify names of fields to return in the search results, where SchemaField.store is set at indextime. If empty then all stored fields are returned.
     #[serde(default)]
     pub fields: Vec<String>,
+    /// Specify distance fields to derive at query time and return in the search results.
     #[serde(default)]
     pub distance_fields: Vec<DistanceField>,
+    /// Facets to return with search results: if empty then no facets are returned. Facets are only enabled on facet fields that are defined in schema at create_index!
     #[serde(default)]
     pub query_facets: Vec<QueryFacet>,
+    /// Facet filters to filter search results by facet values: if empty then no facet filters are applied. Facet filters are only enabled on facet fields that are defined in schema at create_index!
     #[serde(default)]
     pub facet_filter: Vec<FacetFilter>,
     /// Sort field and order:
@@ -98,14 +103,15 @@ pub struct SearchRequestObject {
     #[schema(required = false, example = json!([{"field": "date", "order": "Ascending", "base": "None" }]))]
     #[serde(default)]
     pub result_sort: Vec<ResultSort>,
+    /// Specify default query type: (default=Intersection). This can be overwritten by search operator within the query string (+-"").
     #[schema(required = false, example = QueryType::Intersection)]
     #[serde(default = "query_type_api")]
     pub query_type_default: QueryType,
-
+    /// Specify query rewriting method for search query correction and completion: (default=SearchOnly).
     #[schema(required = false, example = QueryRewriting::SearchOnly)]
     #[serde(default = "query_rewriting_api")]
     pub query_rewriting: QueryRewriting,
-
+    /// Specify search mode: (default=Lexical).
     #[schema(required = false, example = SearchMode::Lexical)]
     #[serde(default = "search_mode_api")]
     pub search_mode: SearchMode,
@@ -158,6 +164,7 @@ pub struct SearchResultObject {
 /// Create index request object
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreateIndexRequest {
+    /// Index name, used for informational purposes only.
     #[schema(example = "demo_index")]
     pub index_name: String,
     #[schema(required = true, example = json!([
@@ -165,23 +172,43 @@ pub struct CreateIndexRequest {
     {"field":"body","field_type":"Text","store":true,"index_lexical":true,"longest":true},
     {"field":"url","field_type":"Text","store":true,"index_lexical":false},
     {"field":"date","field_type":"Timestamp","store":true,"index_lexical":false,"facet":true}]))]
+    /// Schema definition for the index: field name, field type, and indexing options. The schema defines how documents are indexed and searched. It specifies the fields that are indexed, stored, and used for faceting, as well as the field types and their properties. It also defines whether lexical, hybrid, or vector search is enabled for each field.
     #[serde(default)]
     pub schema: Vec<SchemaField>,
+    /// Specify similarity measure for the index: (default=Bm25fProximity). The similarity function is used to calculate the relevance score of search results for a given search query. The choice of similarity function can affect search performance and relevance, depending on the characteristics of the text being indexed and the search queries being executed.
     #[serde(default = "similarity_type_api")]
     pub similarity: LexicalSimilarity,
+    /// Specify tokenizer type for the index: (default=UnicodeAlphanumeric). The tokenizer is used to split text into tokens for indexing and searching. The choice of tokenizer can affect search performance and relevance, depending on the language and characteristics of the text being indexed.
     #[serde(default = "tokenizer_type_api")]
     pub tokenizer: TokenizerType,
     #[serde(default)]
     pub stemmer: StemmerType,
+    /// Specify stop words for the index. Stop words are not indexed and not searched for. This can be used to reduce index size and improve search performance by excluding high-frequency, low-information terms from the index.
     #[serde(default)]
     pub stop_words: StopwordType,
+    /// Specify frequent words for the index. Frequent words are used to optimize search performance for high-frequency terms.
     #[serde(default)]
     pub frequent_words: FrequentwordType,
+    /// Specify n-gram indexing for the index. N-gram indexing can improve search performance for certain types of queries.
+    /// The n-gram set is defined as a bitwise combination of the following values:
+    /// - NgramSet::SingleTerm = 0b00000000,,
+    /// - NgramSet::NgramFF = 0b00000001, (Ngram frequent frequent)
+    /// - NgramSet::NgramFR = 0b00000010, (Ngram frequent rare)
+    /// - NgramSet::NgramRF = 0b00000011, (Ngram rare frequent)
+    /// - NgramSet::NgramFFF = 0b00000100, (Ngram frequent frequent frequent)
+    /// - NgramSet::NgramRFF = 0b00000101, (Ngram rare frequent frequent)
+    /// - NgramSet::NgramFFR = 0b00000110, (Ngram frequent frequent rare)
+    /// - NgramSet::NgramFRF = 0b00000111, (Ngram frequent rare frequent)
+    ///
+    /// For example, to enable both NgramFF and NgramFFF, set ngram_indexing to 5 (1 | 4).
+    /// Note: enabling n-gram indexing (ngram_indexing>0) will increase index size and indexing time, but improves search performance of phrase queries with frequent terms.
     #[serde(default = "ngram_indexing_api")]
     pub ngram_indexing: u8,
+    /// Enable document compression for the index. This can reduce the index size on disk and in memory, but may increase indexing and search latency. Default: Snappy compression.
     #[serde(default = "document_compression_api")]
     pub document_compression: DocumentCompression,
-    #[schema(required = true, example = json!([{"terms":["berry","lingonberry","blueberry","gooseberry"],"multiway":false}]))]
+    /// Specify synonyms for the index. Synonyms are used to expand search queries with additional terms that have the same or similar meaning, improving recall and search relevance. The multiway option specifies whether the synonym relationship is multiway (if true, all terms in the synonym set are considered synonyms of each other) or one-way (if false, only the first term in the synonym set is considered the main term, and the other terms are considered synonyms of the main term).
+    #[schema(required = false, example = json!([{"terms":["berry","lingonberry","blueberry","gooseberry"],"multiway":false}]))]
     #[serde(default)]
     pub synonyms: Vec<Synonym>,
     /// Set number of shards manually or automatically.
@@ -201,10 +228,12 @@ pub struct CreateIndexRequest {
     /// The higher the value, the higher the number of errors taht can be corrected - but also the memory consumption, lookup latency, and the number of false positives.
     #[serde(default)]
     pub spelling_correction: Option<SpellingCorrection>,
+    /// Enable query completion for search queries using a prefix dictionary. When enabled, a prefix dictionary is incrementally created during indexing of documents and stored in the index. The prefix dictionary is used to generate suggestions for query completion based on the indexed documents. In addition you need to set the parameter `query_rewriting` in the search method to enable it per query. Note: enabling query completion increases the index size, indexing time and query latency.
     #[serde(default)]
     pub query_completion: Option<QueryCompletion>,
     #[serde(default)]
     pub clustering: Clustering,
+    /// Enable inference for search and indexing. This can be used to create vector representations of documents and queries for semantic search, e.g. by using a model like PotionBase2M.
     #[serde(default)]
     pub inference: Inference,
 }
@@ -474,7 +503,7 @@ pub(crate) async fn open_all_indices(
         if path.path().is_dir() {
             let single_index_path = path.path();
 
-            let index_arc = match open_index(&single_index_path, false).await {
+            let index_arc = match open_index(&single_index_path).await {
                 Ok(index_arc) => index_arc,
                 Err(err) => {
                     println!("{} {}", err, single_index_path.display());
@@ -539,7 +568,89 @@ pub(crate) async fn open_all_apikeys(
     params(
         ("apikey" = String, Header, description = "YOUR_SECRET_API_KEY",example="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
     ),
-    request_body = inline(CreateIndexRequest),
+
+
+    request_body(
+        content = CreateIndexRequest,
+        examples(
+            ("Example: Lexical index" = (value = json!({
+				"schema":[{
+					"field": "title", 
+					"field_type": "Text", 
+					"store": true, 
+					"index_lexical": true,
+					"boost":10.0
+				},
+					{
+					"field": "body",
+					"field_type": "Text", 
+					"store": true, 
+					"index_lexical": true,
+					"longest": true
+				},
+				{
+					"field": "url", 
+					"field_type": "String32", 
+					"store": true, 
+					"index_lexical": false
+				}],
+				"index_name": "wikipedia",
+				"similarity": "Bm25fProximity",
+				"tokenizer": "UnicodeAlphanumeric"
+			}))),
+			("Example: Hybrid index" = (value = json!({
+				"schema":[{
+					"field": "title", 
+					"field_type": "Text", 
+					"store": true, 
+					"index_lexical": true,
+					"index_vector": true
+				},
+				{
+					"field": "body",
+					"field_type": "Text", 
+					"store": true, 
+					"index_lexical": true,
+					"index_vector": true
+				},
+					{
+					"field": "url", 
+					"field_type": "String32", 
+					"store": true, 
+					"index_lexical": false,
+					"index_vector": false
+				}],
+				"index_name": "wikipedia",
+				"similarity": "Bm25fProximity",
+				"tokenizer": "UnicodeAlphanumeric",
+				"clustering": "Auto",
+				"inference": {"Model2Vec": { "model": "PotionBase2M", "chunk_size": 1000, "quantization": "ScalarQuantizationI8" }}
+			}))),
+            ("Example: Vector index" = (value = json!({
+				"schema":[
+				{
+					"field":"vector",
+					"field_type":"Json",
+					"store":false,
+					"index_lexical":false,
+					"index_vector":true
+				},
+				{
+					"field":"index",
+					"field_type":"Text",
+					"store":true,
+					"index_lexical":false,
+					"index_vector":false
+				}],
+				"index_name": "sift1m",
+				"clustering": "Auto",
+				"inference": {
+					"External": { "dimensions": 128, "precision": "F32", "quantization": "ScalarQuantizationI8", "similarity": "Euclidean" }
+				}
+			})))
+        )
+    ),
+
     responses(
         (status = OK, description = "Index created, returns the index_id", body = u64),
         (status = BAD_REQUEST, description = "Request object incorrect"),
@@ -658,7 +769,7 @@ pub(crate) async fn delete_index_api(
 /// Commit moves indexed documents from the intermediate uncompressed data structure (array lists/HashMap, queryable by realtime search) in RAM
 /// to the final compressed data structure (roaring bitmap) on Mmap or disk -
 /// which is persistent, more compact, with lower query latency and allows search with realtime=false.
-/// Commit is invoked automatically each time 64K documents are newly indexed as well as on close_index (e.g. server quit).
+/// Commit is invoked automatically each time 64K documents are newly indexed **per shard** as well as on close_index (e.g. server quit).
 /// There is no way to prevent this automatic commit by not manually invoking it.
 /// But commit can also be invoked manually at any time at any number of newly indexed documents.
 /// commit is a **hard commit** for persistence on disk. A **soft commit** for searchability
@@ -666,12 +777,12 @@ pub(crate) async fn delete_index_api(
 /// i.e. the document can immediately searched and included in the search results
 /// if it matches the query AND the query paramter realtime=true is enabled.
 /// **Use commit with caution, as it is an expensive operation**.
-/// **Usually, there is no need to invoke it manually**, as it is invoked automatically every 64k documents and when the index is closed with close_index.
+/// **Usually, there is no need to invoke it manually**, as it is invoked automatically every 64k documents **per shard** and when the index is closed with close_index.
 /// Before terminating the program, always call close_index (commit), otherwise all documents indexed since last (manual or automatic) commit are lost.
 /// There are only 2 reasons that justify a manual commit:
 /// 1. if you want to search newly indexed documents without using realtime=true for search performance reasons or
 /// 2. if after indexing new documents there won't be more documents indexed (for some time),
-///    so there won't be (soon) a commit invoked automatically at the next 64k threshold or close_index,
+///    so there won't be (soon) a commit invoked automatically at the next 64k threshold **per shard**or close_index,
 ///    but you still need immediate persistence guarantees on disk to protect against data loss in the event of a crash.
 #[utoipa::path(
     patch,
@@ -823,7 +934,7 @@ pub(crate) async fn get_apikey_indices_info_api(
 /// Index a JSON document or an array of JSON documents (bulk), each consisting of arbitrary key-value pairs to the index with the specified apikey and index_id, and return the number of indexed docs.
 /// Index documents enables true real-time search (as opposed to near realtime.search):
 /// When in query_index the parameter `realtime` is set to `true` then indexed, but uncommitted documents are immediately included in the search results, without requiring a commit or refresh.
-/// Therefore a explicit commit_index is almost never required, as it is invoked automatically after 64k documents are indexed or on close_index for persistence.
+/// Therefore a explicit commit_index is almost never required, as it is invoked automatically after 64k documents are indexed **per shard** or on close_index for persistence.
 #[utoipa::path(
     post,
     tag = "Document",
@@ -833,7 +944,34 @@ pub(crate) async fn get_apikey_indices_info_api(
         ("index_id" = u64, Path, description = "index id"),
     ),
 
-    request_body(content = HashMap<String, Value>, description = "JSON document or array of JSON documents, each consisting of key-value pairs", content_type = "application/json", example=json!({"title":"title1 test","body":"body1","url":"url1"})),
+
+ 	request_body(
+        content = HashMap<String, Value>, description = "JSON document or array of JSON documents, each consisting of key-value pairs",content_type = "application/json", 
+        examples(
+    ("Example: Single Lexical/Hybrid document" = (value = json!(  {
+        "title": "title1 test",
+        "body": "body1",
+        "url": "url1"
+		} ))),
+	("Example: Multiple Lexical/Hybrid documents" = (value = json!(  [
+{
+    "title":"title2",
+    "body":"body2 test",
+    "url":"url2"
+},
+{
+    "title":"title3 test",
+    "body":"body3 test",
+    "url":"url3"
+}
+]   ))),
+    ("Example: Multiple Vector documents" = (value = json!(  [
+    {"vector":[0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.010, 0.011, 0.012, 0.013, 0.014, 0.015, 0.016, 0.017, 0.018, 0.019, 0.020, 0.021, 0.022, 0.023, 0.024, 0.025, 0.026, 0.027, 0.028, 0.029, 0.030, 0.031, 0.032, 0.033, 0.034, 0.035, 0.036, 0.037, 0.038, 0.039, 0.040, 0.041, 0.042, 0.043, 0.044, 0.045, 0.046, 0.047, 0.048, 0.049, 0.050, 0.051, 0.052, 0.053, 0.054, 0.055, 0.056, 0.057, 0.058, 0.059, 0.060, 0.061, 0.062, 0.063, 0.064, 0.065, 0.066, 0.067, 0.068, 0.069, 0.070, 0.071, 0.072, 0.073, 0.074, 0.075, 0.076, 0.077, 0.078, 0.079, 0.080, 0.081, 0.082, 0.083, 0.084, 0.085, 0.086, 0.087, 0.088, 0.089, 0.090, 0.091, 0.092, 0.093, 0.094, 0.095, 0.096, 0.097, 0.098, 0.099, 0.100, 0.101, 0.102, 0.103, 0.104, 0.105, 0.106, 0.107, 0.108, 0.109, 0.110, 0.111, 0.112, 0.113, 0.114, 0.115, 0.116, 0.117, 0.118, 0.119, 0.120, 0.121, 0.122, 0.123, 0.124, 0.125, 0.126, 0.127, 0.128],"index":"0"},
+    {"vector":[0.129, 0.130, 0.131, 0.132, 0.133, 0.134, 0.135, 0.136, 0.137, 0.138, 0.139, 0.140, 0.141, 0.142, 0.143, 0.144, 0.145, 0.146, 0.147, 0.148, 0.149, 0.150, 0.151, 0.152, 0.153, 0.154, 0.155, 0.156, 0.157, 0.158, 0.159, 0.160, 0.161, 0.162, 0.163, 0.164, 0.165, 0.166, 0.167, 0.168, 0.169, 0.170, 0.171, 0.172, 0.173, 0.174, 0.175, 0.176, 0.177, 0.178, 0.179, 0.180, 0.181, 0.182, 0.183, 0.184, 0.185, 0.186, 0.187, 0.188, 0.189, 0.190, 0.191, 0.192, 0.193, 0.194, 0.195, 0.196, 0.197, 0.198, 0.199, 0.200, 0.201, 0.202, 0.203, 0.204, 0.205, 0.206, 0.207, 0.208, 0.209, 0.210, 0.211, 0.212, 0.213, 0.214, 0.215, 0.216, 0.217, 0.218, 0.219, 0.220, 0.221, 0.222, 0.223, 0.224, 0.225, 0.226, 0.227, 0.228, 0.229, 0.230, 0.231, 0.232, 0.233, 0.234, 0.235, 0.236, 0.237, 0.238, 0.239, 0.240, 0.241, 0.242, 0.243, 0.244, 0.245, 0.246, 0.247, 0.248, 0.249, 0.250, 0.251, 0.252, 0.253, 0.254, 0.255, 0.256],"index":"1"},
+    {"vector":[0.257, 0.258, 0.259, 0.260, 0.261, 0.262, 0.263, 0.264, 0.265, 0.266, 0.267, 0.268, 0.269, 0.270, 0.271, 0.272, 0.273, 0.274, 0.275, 0.276, 0.277, 0.278, 0.279, 0.280, 0.281, 0.282, 0.283, 0.284, 0.285, 0.286, 0.287, 0.288, 0.289, 0.290, 0.291, 0.292, 0.293, 0.294, 0.295, 0.296, 0.297, 0.298, 0.299, 0.300, 0.301, 0.302, 0.303, 0.304, 0.305, 0.306, 0.307, 0.308, 0.309, 0.310, 0.311, 0.312, 0.313, 0.314, 0.315, 0.316, 0.317, 0.318, 0.319, 0.320, 0.321, 0.322, 0.323, 0.324, 0.325, 0.326, 0.327, 0.328, 0.329, 0.330, 0.331, 0.332, 0.333, 0.334, 0.335, 0.336, 0.337, 0.338, 0.339, 0.340, 0.341, 0.342, 0.343, 0.344, 0.345, 0.346, 0.347, 0.348, 0.349, 0.350, 0.351, 0.352, 0.353, 0.354, 0.355, 0.356, 0.357, 0.358, 0.359, 0.360, 0.361, 0.362, 0.363, 0.364, 0.365, 0.366, 0.367, 0.368, 0.369, 0.370, 0.371, 0.372, 0.373, 0.374, 0.375, 0.376, 0.377, 0.378, 0.379, 0.380, 0.381, 0.382, 0.383, 0.384],"index":"2"}
+]   )))
+        )
+    ),
     responses(
         (status = 200, description = "Document indexed, returns the number of indexed documents", body = usize),
         (status = BAD_REQUEST, description = "Document object invalid"),
@@ -1013,7 +1151,7 @@ pub(crate) async fn get_document_api(
 /// All current limitations of delete_document apply.
 /// Update documents enables true real-time search (as opposed to near realtime.search):
 /// When in query_index the parameter `realtime` is set to `true` then indexed, but uncommitted documents are immediately included in the search results, without requiring a commit or refresh.
-/// Therefore a explicit commit_index is almost never required, as it is invoked automatically after 64k documents are indexed or on close_index for persistence.
+/// Therefore a explicit commit_index is almost never required, as it is invoked automatically after 64k documents are indexed **per shard** or on close_index for persistence.
 #[utoipa::path(
     patch,
     tag = "Document",
@@ -1340,7 +1478,96 @@ pub(crate) async fn clear_index_api(index_arc: &IndexArc) -> Result<u64, String>
         ("apikey" = String, Header, description = "YOUR_SECRET_API_KEY",example="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
         ("index_id" = u64, Path, description = "index id"),
     ),
-    request_body = inline(SearchRequestObject),
+
+
+    request_body(
+        content = SearchRequestObject,
+        examples(
+            ("Example: Lexical search" = (value = json!(  {
+        "query": "detroit",
+        "query_vector": null,
+        "enable_empty_query": false,
+        "offset": 0,
+        "length": 10,
+        "result_type": "TopkCount",
+        "realtime": true,
+        "highlights": [
+            {
+                "field": "",
+                "name": "",
+                "fragment_number": 0,
+                "fragment_size": 0,
+                "highlight_markup": true,
+                "pre_tags": "",
+                "post_tags": ""
+            }
+        ],
+        "field_filter": ["title"],
+        "fields": [],
+        "query_type_default": "Intersection",
+        "query_rewriting": "SearchOnly",
+        "search_mode": "Lexical"
+    }   ))),
+	("Example: Hybrid search" = (value = json!(  {
+        "query": "detroit",
+        "query_vector": null,
+        "enable_empty_query": false,
+        "offset": 0,
+        "length": 10,
+        "result_type": "TopkCount",
+        "realtime": true,
+        "highlights": [
+            {
+                "field": "",
+                "name": "",
+                "fragment_number": 0,
+                "fragment_size": 0,
+                "highlight_markup": true,
+                "pre_tags": "",
+                "post_tags": ""
+            }
+        ],
+        "field_filter": ["title"],
+        "fields": [],
+        "query_type_default": "Intersection",
+        "query_rewriting": "SearchOnly",
+        "search_mode": {
+            "Hybrid": {
+                "similarity_threshold": 0.7,
+                "ann_mode": {
+                    "Nprobe": 55
+                }
+            }
+        }
+    }  ))),
+("Example: Vector search" = (value = json!(  {
+    "query":"",
+    "query_vector": [
+        0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.010, 0.011, 0.012, 0.013,
+        0.014, 0.015, 0.016, 0.017, 0.018, 0.019, 0.020, 0.021, 0.022, 0.023, 0.024, 0.025, 0.026,
+        0.027, 0.028, 0.029, 0.030, 0.031, 0.032, 0.033, 0.034, 0.035, 0.036, 0.037, 0.038, 0.039,
+        0.040, 0.041, 0.042, 0.043, 0.044, 0.045, 0.046, 0.047, 0.048, 0.049, 0.050, 0.051, 0.052,
+        0.053, 0.054, 0.055, 0.056, 0.057, 0.058, 0.059, 0.060, 0.061, 0.062, 0.063, 0.064, 0.065,
+        0.066, 0.067, 0.068, 0.069, 0.070, 0.071, 0.072, 0.073, 0.074, 0.075, 0.076, 0.077, 0.078,
+        0.079, 0.080, 0.081, 0.082, 0.083, 0.084, 0.085, 0.086, 0.087, 0.088, 0.089, 0.090, 0.091,
+        0.092, 0.093, 0.094, 0.095, 0.096, 0.097, 0.098, 0.099, 0.100, 0.101, 0.102, 0.103, 0.104,
+        0.105, 0.106, 0.107, 0.108, 0.109, 0.110, 0.111, 0.112, 0.113, 0.114, 0.115, 0.116, 0.117,
+        0.118, 0.119, 0.120, 0.121, 0.122, 0.123, 0.124, 0.125, 0.126, 0.127, 0.128
+    ],
+    "offset":0,
+    "length":10,
+    "result_type": "Topk",
+    "realtime": false,
+    "search_mode": {
+        "Vector":{
+            "similarity_threshold": 0.7, 
+            "ann_mode": {"Nprobe":55}
+        }
+    }
+
+}  )))
+        )
+    ),
     responses(
         (status = 200, description = "Results found, returns the SearchResultObject", body = SearchResultObject),
         (status = BAD_REQUEST, description = "Request object incorrect"),
@@ -1360,7 +1587,9 @@ pub(crate) async fn query_index_api_post(
 /// Query Index
 ///
 /// Query results from index with index_id.
-/// Query index via GET is a convenience function, that offers only a limited set of parameters compared to Query Index via POST.
+/// Query index via GET is a convenience function, that **offers only a limited set of parameters compared to Query Index via POST**.
+/// Always use Query Index via POST for the full set of parameters and maximum flexibility.
+/// Query Index via GET is provided for simple queries and quick testing, and to be easily callable from browser address bar, but it is not intended for production use.
 #[utoipa::path(
     get,
     tag = "Query",
