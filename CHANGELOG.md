@@ -26,9 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Improved
 
 - Norm changed from i32 to f32. More norm calculation moved from search time to index time.
-
-### Improved
-
 - REST API documentation improved.
 
 ### Changed
