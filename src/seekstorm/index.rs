@@ -3638,9 +3638,9 @@ pub static IS_SYSTEM_LE: LazyLock<bool> = LazyLock::new(|| u16::from_ne_bytes([1
 
 /// AVX2 support enabled
 pub static IS_AVX2: LazyLock<bool> = LazyLock::new(|| {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     let is_avx2 = is_x86_feature_detected!("avx2");
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(not(target_arch = "x86_64"))]
     let is_avx2 = false;
     is_avx2
 });

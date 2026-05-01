@@ -70,7 +70,7 @@ pub(crate) fn normalize_f32(embeddings: &mut [f32]) {
     embeddings.iter_mut().for_each(|b| *b *= norm_factor);
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn normalize_f32_avx2(data: &mut [f32]) {
     unsafe {
         let len = data.len();
@@ -110,12 +110,14 @@ pub(crate) unsafe fn normalize_f32_avx2(data: &mut [f32]) {
     }
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 unsafe fn horizontal_sum_avx2(v: __m256) -> f32 {
-    let x128 = _mm_add_ps(_mm256_extractf128_ps(v, 1), _mm256_castps256_ps128(v));
-    let x64 = _mm_add_ps(x128, _mm_movehl_ps(x128, x128));
-    let x32 = _mm_add_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
-    _mm_cvtss_f32(x32)
+    unsafe {
+        let x128 = _mm_add_ps(_mm256_extractf128_ps(v, 1), _mm256_castps256_ps128(v));
+        let x64 = _mm_add_ps(x128, _mm_movehl_ps(x128, x128));
+        let x32 = _mm_add_ss(x64, _mm_shuffle_ps(x64, x64, 0x55));
+        _mm_cvtss_f32(x32)
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -530,6 +532,7 @@ pub(crate) fn similarity_embedding(
 }
 
 #[allow(clippy::type_complexity)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn similarity_embedding_view_avx2(
     query: &QuerySimd,
     emb: &EmbeddingView,
@@ -693,6 +696,7 @@ pub(crate) unsafe fn similarity_embedding_view_avx2(
 }
 
 #[allow(clippy::type_complexity)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn similarity_embedding_avx2(
     query: &QuerySimd,
     emb: &Embedding,
@@ -867,7 +871,7 @@ pub(crate) fn euclidean_i8(a: &[i8], b: &[i8]) -> f32 {
     sum_squared_diffs as f32
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn euclidean_f32_avx2(query: &QuerySimd, b: &[f32]) -> f32 {
     unsafe {
         let query = match query {
@@ -897,7 +901,7 @@ pub(crate) unsafe fn euclidean_f32_avx2(query: &QuerySimd, b: &[f32]) -> f32 {
     }
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn euclidean_i8_avx2(query: &QuerySimd, b: &[i8]) -> i32 {
     unsafe {
         let query = match query {
@@ -955,7 +959,7 @@ pub(crate) enum QuerySimd {
 }
 
 impl QuerySimd {
-    #[target_feature(enable = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn new(query: &Embedding) -> Self {
         unsafe {
             match query {
@@ -1005,7 +1009,7 @@ pub(crate) unsafe fn dot_f32_avx2(query: &QuerySimd, emb: &[f32]) -> f32 {
     }
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn dot_i8_avx2(query: &QuerySimd, emb: &[i8]) -> i32 {
     unsafe {
         let query = match query {
@@ -1040,7 +1044,7 @@ pub(crate) unsafe fn dot_i8_avx2(query: &QuerySimd, emb: &[i8]) -> i32 {
     }
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn quantize_f32_to_i8_avx2(input: &[f32]) -> Embedding {
     unsafe {
         let mut output = vec![0i8; input.len()];
@@ -1092,20 +1096,22 @@ pub(crate) fn quantize_f32_to_i8(embedding: &[f32]) -> Embedding {
     Embedding::I8(output)
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 unsafe fn round_away_from_zero_avx2(x: __m256) -> __m256i {
-    let half = _mm256_set1_ps(0.5);
+    unsafe {
+        let half = _mm256_set1_ps(0.5);
 
-    let sign = _mm256_and_ps(x, _mm256_set1_ps(-0.0));
+        let sign = _mm256_and_ps(x, _mm256_set1_ps(-0.0));
 
-    let signed_half = _mm256_or_ps(half, sign);
+        let signed_half = _mm256_or_ps(half, sign);
 
-    let adjusted = _mm256_add_ps(x, signed_half);
+        let adjusted = _mm256_add_ps(x, signed_half);
 
-    _mm256_cvttps_epi32(adjusted)
+        _mm256_cvttps_epi32(adjusted)
+    }
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn quantize_avx2(values: &[f32], scale: f32) -> Vec<i8> {
     unsafe {
         let inv_scale = 1.0 / scale;
@@ -1145,7 +1151,7 @@ pub(crate) unsafe fn quantize_avx2(values: &[f32], scale: f32) -> Vec<i8> {
     }
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn squared_norm_avx2(data: &[i8]) -> i32 {
     unsafe {
         let mut sum = _mm256_setzero_si256();
@@ -1207,6 +1213,7 @@ impl QuantizedVector {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
     pub(crate) fn new_scale_avx2(values: &[f32]) -> Self {
         unsafe {
             let max_val = Self::max_abs_avx2(values);
@@ -1282,6 +1289,7 @@ impl QuantizedVector {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
     pub(crate) fn new_scale_norm_affine_avx2(
         min_vector_value: &mut f32,
         max_vector_value: &mut f32,
@@ -1327,7 +1335,7 @@ impl QuantizedVector {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     unsafe fn max_abs_avx2(values: &[f32]) -> f32 {
         unsafe {
             let mut max_vec = _mm256_setzero_ps();
@@ -1355,7 +1363,7 @@ impl QuantizedVector {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     unsafe fn max_avx2(values: &[f32]) -> f32 {
         unsafe {
             if values.is_empty() {
@@ -1391,7 +1399,7 @@ impl QuantizedVector {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     unsafe fn min_avx2(values: &[f32]) -> f32 {
         unsafe {
             if values.is_empty() {
@@ -1427,7 +1435,7 @@ impl QuantizedVector {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn quantize_affine_avx2(
         values: &[f32],
         scale: f32,
@@ -1488,7 +1496,7 @@ impl QuantizedVector {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     unsafe fn sum_avx2(data: &[i8]) -> i32 {
         unsafe {
             let mut sum = _mm256_setzero_si256();
@@ -1532,6 +1540,7 @@ fn dot_i8_quantized(v1: &[i8], scale1: f32, v2: &[i8], scale2: f32) -> f32 {
     dot_i32 as f32 * scale1 * scale2
 }
 
+#[cfg(target_arch = "x86_64")]
 fn dot_i8_quantized_avx2(v1: &QuerySimd, scale1: f32, v2: &[i8], scale2: f32) -> f32 {
     let dot_i32: i32 = unsafe { dot_i8_avx2(v1, v2) };
 
@@ -1564,6 +1573,7 @@ pub(crate) fn euclidean_i8_quantized_affine(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(target_arch = "x86_64")]
 pub(crate) fn euclidean_i8_quantized_affine_avx2(
     v1: &QuerySimd,
     scale1: f32,
@@ -1645,7 +1655,7 @@ impl TurboQuant {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     unsafe fn fwht_avx2(a: &mut [f32]) {
         let n = a.len();
         let mut h = 1;
@@ -1679,10 +1689,10 @@ impl TurboQuant {
             h *= 2;
         }
 
-        let norm_val = (n as f32).sqrt();
-        let v_norm = _mm256_set1_ps(norm_val);
-        for i in (0..n).step_by(8) {
-            unsafe {
+        unsafe {
+            let norm_val = (n as f32).sqrt();
+            let v_norm = _mm256_set1_ps(norm_val);
+            for i in (0..n).step_by(8) {
                 let v = _mm256_loadu_ps(a.as_ptr().add(i));
                 let v_res = _mm256_div_ps(v, v_norm);
                 _mm256_storeu_ps(a.as_mut_ptr().add(i), v_res);
@@ -1721,6 +1731,7 @@ impl TurboQuant {
     }
 
     /// Quantisizes a f32 vector of arbitrary size to the next power of two, using AVX2 for acceleration
+    #[cfg(target_arch = "x86_64")]
     pub(crate) fn quantize_f32_i8_avx2(&self, vec: &[f32]) -> QuantizedVector {
         let mut padded_data = vec![0.0; self.dim];
         let len_to_copy = vec.len().min(self.dim);
@@ -1745,7 +1756,7 @@ impl TurboQuant {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     unsafe fn hadamard_product_avx2(padded_data: &mut [f32], seed_mask: &[f32]) {
         let n = padded_data.len();
         let chunks = n / 8;
@@ -1768,7 +1779,7 @@ impl TurboQuant {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg(target_arch = "x86_64")]
     unsafe fn calculate_scale_avx2(&self, rotated: &[f32]) -> f32 {
         unsafe {
             let mut sum_sq;
@@ -1799,6 +1810,7 @@ impl TurboQuant {
     }
 
     /// QJL-corrected Euclidean Distance (Squared)
+    #[cfg(target_arch = "x86_64")]
     pub(crate) fn euclidean_i8_turboquant_avx2(
         v1_q: &QuerySimd,
         scale1: f32,
@@ -1832,6 +1844,7 @@ impl TurboQuant {
     }
 
     /// Calculates the estimated Dot Product between two vectors.
+    #[cfg(target_arch = "x86_64")]
     pub(crate) fn dot_i8_turboquant_avx2(
         v1_q: &QuerySimd,
         scale1: f32,

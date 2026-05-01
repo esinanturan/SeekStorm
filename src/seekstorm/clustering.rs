@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 
 use itertools::Itertools;
 use num::integer::Roots;
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
 use crate::{
@@ -52,7 +53,7 @@ pub(crate) struct ParentMedoid {
     pub sum_q: i32,
 }
 
-#[target_feature(enable = "avx2")]
+#[cfg(target_arch = "x86_64")]
 unsafe fn accumulate_f32_avx2(sum: &mut [f32], emb: &[f32]) {
     unsafe {
         let len = emb.len();
@@ -83,6 +84,7 @@ unsafe fn accumulate_f32_avx2(sum: &mut [f32], emb: &[f32]) {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 unsafe fn accumulate_i8_avx2(sum: &mut [f32], emb: &[i8]) {
     unsafe {
         let len = emb.len();
@@ -123,6 +125,7 @@ unsafe fn accumulate_i8_avx2(sum: &mut [f32], emb: &[i8]) {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 pub(crate) fn accumulate_avx2(sum: &mut [f32], emb: &Embedding) {
     match emb {
         Embedding::I8(emb) => unsafe { accumulate_i8_avx2(sum, emb) },
