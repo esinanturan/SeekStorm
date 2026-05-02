@@ -1852,5 +1852,25 @@ Are you missing something? Let us know via issue or discussions.
 * WebAssembly (Wasm)
 * Wrapper/bindings in JavaScript, Python, Java, C#, C, Go for the SeekStorm Rust library
 * Client libraries/SDK in JavaScript, Python, Java, C#, C, Go, Rust for the SeekStorm server REST API
+* Improved SIMD support
+  - ✅ lexical search: 
+	- ✅ x86_64 (Intel, AMD)
+	  - ✅ AVX2
+	  - AVX512
+	  - AVX10
+	- ✅ AArch64 (Apple Silicon, AWS Graviton)
+	  - ✅ NEON 
+	  - SVE/SVE2 
+	- GPU (NVIDIA)
+  - ✅ vector search: 
+	- ✅ x86_64 (Intel, AMD)
+	  - ✅ AVX2
+	  - AVX512
+	  - AVX10
+	- AArch64 (Apple Silicon, AWS Graviton)
+	  - NEON 
+	  - SVE/SVE2 
+	- GPU (NVIDIA)
+
 
 
