@@ -576,7 +576,7 @@ impl Shard {
                         if let Some(mut embedding) = embedding_from_json(
                             field_value,
                             self.vector_precision,
-                            self.vector_dimensions,
+                            self.vector_dimensions_original,
                         ) {
                             if self.vector_similarity == VectorSimilarity::Cosine
                                 && matches!(self.meta.inference, Inference::External { .. })
@@ -743,7 +743,7 @@ impl Shard {
                             && let Some(mut embedding) = embedding_from_bytes_be(
                                 &bytes,
                                 self.vector_precision,
-                                self.vector_dimensions,
+                                self.vector_dimensions_original,
                                 *IS_SYSTEM_LE,
                             )
                         {

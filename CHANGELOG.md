@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.2] - 2026-05-03
+
+### Fixed
+
+- TurboQuant quantization fixed for dimensions that are not a power of two (the dimension has to be padded to the next power of two for Fast Walsh-Hadamard Transform).
+
 ## [3.1.1] - 2026-05-01
 
 ### Fixed

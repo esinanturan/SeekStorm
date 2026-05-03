@@ -1281,6 +1281,7 @@ pub struct Shard {
     pub(crate) vector_file_mmap: Mmap,
     pub(crate) block_vector_buffer: Vec<ParentMedoid>,
     pub(crate) vector_dimensions: usize,
+    pub(crate) vector_dimensions_original: usize,
     pub(crate) vector_precision: Precision,
     pub(crate) quantization: Quantization,
     pub(crate) vector_similarity: VectorSimilarity,
@@ -1348,7 +1349,10 @@ pub struct Index {
     pub vector_precision: Precision,
     pub(crate) quantization: Quantization,
     /// The dimensions of the vectors: e.g. 64, 128, 256, 512, 1024, 768, 1536, 2048, 4096
+    /// When using TurboQuant, padded to the next power of two for the Fast Walsh-Hadamard Transform.
     pub vector_dimensions: usize,
+    /// The original dimensions of the vectors.
+    pub vector_dimensions_original: usize,
     /// Vector similarity function for approximate nearest neighbor (ANN) search: Cosine, Euclidean, DotProduct.
     pub vector_similarity: VectorSimilarity,
     /// AVX2 support enabled
@@ -1801,6 +1805,15 @@ pub(crate) async fn create_index_root(
                 TurboQuant::new(0, 1234)
             };
 
+            let vector_dimensions_original = vector_dimensions;
+            let vector_dimensions = if quantization == Quantization::TurboQuantI8
+                && vector_precision == Precision::F32
+            {
+                TurboQuant::next_power_of_two(vector_dimensions)
+            } else {
+                vector_dimensions
+            };
+
             let mut shard_vec: Vec<Arc<RwLock<Shard>>> = Vec::new();
             let mut shard_queue = VecDeque::<usize>::new();
             if serialize_schema {
@@ -1829,6 +1842,7 @@ pub(crate) async fn create_index_root(
                         .unwrap();
                         shard.shard_number = shard_number;
                         shard.vector_dimensions = vector_dimensions;
+                        shard.vector_dimensions_original = vector_dimensions_original;
                         shard.vector_precision = vector_precision;
                         shard.quantization = quantization;
                         shard.vector_similarity = vector_similarity;
@@ -1908,6 +1922,7 @@ pub(crate) async fn create_index_root(
 
                 embedding_model_option,
                 vector_dimensions,
+                vector_dimensions_original,
                 vector_precision,
                 quantization,
                 vector_similarity,
@@ -2394,6 +2409,7 @@ pub(crate) fn create_shard(
                 is_lexical_indexing,
                 block_vector_buffer: Vec::new(),
                 vector_dimensions: 0,
+                vector_dimensions_original: 0,
                 vector_precision: Precision::None,
                 quantization: Quantization::None,
                 vector_similarity: VectorSimilarity::Dot,
@@ -3491,6 +3507,8 @@ pub async fn open_index(index_path: &Path) -> Result<IndexArc, String> {
                                     index_arc.read().await.shard_number;
                                 shard_arc.write().await.vector_dimensions =
                                     index_arc.read().await.vector_dimensions;
+                                shard_arc.write().await.vector_dimensions_original =
+                                    index_arc.read().await.vector_dimensions_original;
                                 shard_arc.write().await.vector_precision =
                                     index_arc.read().await.vector_precision;
                                 shard_arc.write().await.vector_similarity =

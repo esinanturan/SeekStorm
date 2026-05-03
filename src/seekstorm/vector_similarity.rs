@@ -1612,7 +1612,7 @@ pub(crate) struct TurboQuant {
 }
 
 impl TurboQuant {
-    fn next_power_of_two(n: usize) -> usize {
+    pub(crate) fn next_power_of_two(n: usize) -> usize {
         if n.is_power_of_two() {
             n
         } else {

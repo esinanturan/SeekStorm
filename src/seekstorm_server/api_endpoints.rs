@@ -1636,7 +1636,7 @@ pub(crate) async fn query_index_api(
                     && let Some(embedding) = embedding_from_bytes_be(
                         &bytes,
                         index_arc.read().await.vector_precision,
-                        index_arc.read().await.vector_dimensions,
+                        index_arc.read().await.vector_dimensions_original,
                         *IS_SYSTEM_LE,
                     )
                 {
@@ -1648,7 +1648,7 @@ pub(crate) async fn query_index_api(
             Value::Array(_) => embedding_from_json(
                 &value,
                 index_arc.read().await.vector_precision,
-                index_arc.read().await.vector_dimensions,
+                index_arc.read().await.vector_dimensions_original,
             ),
             _ => None,
         }
