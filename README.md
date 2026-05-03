@@ -1843,7 +1843,7 @@ Are you missing something? Let us know via issue or discussions.
 * ✅ TurboQuant (TQ) for vector search
 * Geocoding, reverse geocoding, GeoJSON
 * Model Context Protocol (MCP) server for Retrieval Augmented Generation (RAG)
-* Split of storage and compute
+* **Split of storage and compute**
   * Use S3 object storage as index backend
   * Use Distributed Key-Value store as index backend
 * Elasticity: automatic spawning and winding down of shards in the cloud depending on index size and load.
