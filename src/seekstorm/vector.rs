@@ -187,6 +187,10 @@ pub(crate) fn read_min_max(bytes: &[u8], dimensions: usize) -> (f32, f32) {
     let header: &VectorHeader =
         from_bytes(&bytes[start_last_vector..start_last_vector + size_of::<VectorHeader>()]);
 
+    if header.zero_point == 0 && header.sum_q == 0 {
+        return (0.0, f32::MIN);
+    }
+
     let min_val = header.scale * (-header.zero_point - 128) as f32;
     let max_val = (127 - header.zero_point) as f32 * header.scale;
     (min_val, max_val)
@@ -650,12 +654,24 @@ impl Shard {
                                         Quantization::ScalarQuantizationI8,
                                         true,
                                     ) => {
-                                        let quantized_vector =
+                                        let non_affine = if self.min_vector_value == f32::MAX {
+                                            fvecs
+                                                .iter()
+                                                .any(|x| x.fract() != 0.0 || *x < 0.0 || *x > 255.0)
+                                        } else {
+                                            self.max_vector_value == f32::MIN
+                                        };
+
+                                        let quantized_vector = if non_affine {
+                                            self.min_vector_value = 0.0;
+                                            QuantizedVector::new_scale_norm_avx2(fvecs)
+                                        } else {
                                             QuantizedVector::new_scale_norm_affine_avx2(
                                                 &mut self.min_vector_value,
                                                 &mut self.max_vector_value,
                                                 fvecs,
-                                            );
+                                            )
+                                        };
 
                                         embedding = Embedding::I8(quantized_vector.data);
                                         (
@@ -684,12 +700,24 @@ impl Shard {
                                         Quantization::ScalarQuantizationI8,
                                         false,
                                     ) => {
-                                        let quantized_vector =
+                                        let non_affine = if self.min_vector_value == f32::MAX {
+                                            fvecs
+                                                .iter()
+                                                .any(|x| x.fract() != 0.0 || *x < 0.0 || *x > 255.0)
+                                        } else {
+                                            self.max_vector_value == f32::MIN
+                                        };
+                                        let quantized_vector = if non_affine {
+                                            self.min_vector_value = 0.0;
+                                            QuantizedVector::new_scale_norm(fvecs)
+                                        } else {
                                             QuantizedVector::new_scale_norm_affine(
                                                 &mut self.min_vector_value,
                                                 &mut self.max_vector_value,
                                                 fvecs,
-                                            );
+                                            )
+                                        };
+
                                         embedding = Embedding::I8(quantized_vector.data);
                                         (
                                             quantized_vector.scale,
@@ -823,12 +851,24 @@ impl Shard {
                                         Quantization::ScalarQuantizationI8,
                                         true,
                                     ) => {
-                                        let quantized_vector =
+                                        let non_affine = if self.min_vector_value == f32::MAX {
+                                            fvecs
+                                                .iter()
+                                                .any(|x| x.fract() != 0.0 || *x < 0.0 || *x > 255.0)
+                                        } else {
+                                            self.max_vector_value == f32::MIN
+                                        };
+                                        let quantized_vector = if non_affine {
+                                            self.min_vector_value = 0.0;
+                                            QuantizedVector::new_scale_norm_avx2(fvecs)
+                                        } else {
                                             QuantizedVector::new_scale_norm_affine_avx2(
                                                 &mut self.min_vector_value,
                                                 &mut self.max_vector_value,
                                                 fvecs,
-                                            );
+                                            )
+                                        };
+
                                         embedding = Embedding::I8(quantized_vector.data);
                                         (
                                             quantized_vector.scale,
@@ -856,12 +896,23 @@ impl Shard {
                                         Quantization::ScalarQuantizationI8,
                                         false,
                                     ) => {
-                                        let quantized_vector =
+                                        let non_affine = if self.min_vector_value == f32::MAX {
+                                            fvecs
+                                                .iter()
+                                                .any(|x| x.fract() != 0.0 || *x < 0.0 || *x > 255.0)
+                                        } else {
+                                            self.max_vector_value == f32::MIN
+                                        };
+                                        let quantized_vector = if non_affine {
+                                            self.min_vector_value = 0.0;
+                                            QuantizedVector::new_scale_norm(fvecs)
+                                        } else {
                                             QuantizedVector::new_scale_norm_affine(
                                                 &mut self.min_vector_value,
                                                 &mut self.max_vector_value,
                                                 fvecs,
-                                            );
+                                            )
+                                        };
 
                                         embedding = Embedding::I8(quantized_vector.data);
                                         (
@@ -1113,6 +1164,9 @@ impl Shard {
         let level_id = self.level_index.len();
         let enable_scale = self.quantization != Quantization::None
             && self.vector_similarity != VectorSimilarity::Cosine;
+
+        let non_affine = self.max_vector_value == f32::MIN;
+
         for record in self.block_vector_buffer.iter() {
             if field_filter_set.is_empty() || field_filter_set.contains(&(record.field_id as u16)) {
                 let scale_norm = if enable_scale {
@@ -1137,6 +1191,7 @@ impl Shard {
                             scale_norm,
                             *vector_similarity,
                             self.quantization,
+                            non_affine,
                         )
                     }
                 } else {
@@ -1146,6 +1201,7 @@ impl Shard {
                         scale_norm,
                         *vector_similarity,
                         self.quantization,
+                        non_affine,
                     )
                 };
                 let doc_id = (level_id << 16) | (record.doc_id as usize);
@@ -1181,6 +1237,8 @@ impl SearchVectorShard for ShardArc {
 
         let shard_ref = self.read().await;
         let mut observed_cluster_count = 0;
+
+        let non_affine = shard_ref.max_vector_value == f32::MIN;
 
         if !shard_ref.is_vector_indexing || shard_ref.indexed_vector_count == 0 {
             return result_object;
@@ -1305,6 +1363,7 @@ impl SearchVectorShard for ShardArc {
                                 scale_norm,
                                 vector_similarity,
                                 shard_ref.quantization,
+                                non_affine,
                             )
                         }
                     } else {
@@ -1314,6 +1373,7 @@ impl SearchVectorShard for ShardArc {
                             scale_norm,
                             vector_similarity,
                             shard_ref.quantization,
+                            non_affine,
                         )
                     };
 
@@ -1393,6 +1453,7 @@ impl SearchVectorShard for ShardArc {
                                     scale_norm,
                                     vector_similarity,
                                     shard_ref.quantization,
+                                    non_affine,
                                 )
                             } else {
                                 similarity_embedding_view(
@@ -1401,6 +1462,7 @@ impl SearchVectorShard for ShardArc {
                                     scale_norm,
                                     vector_similarity,
                                     shard_ref.quantization,
+                                    non_affine,
                                 )
                             };
 

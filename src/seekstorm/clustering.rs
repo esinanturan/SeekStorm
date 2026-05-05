@@ -146,6 +146,8 @@ pub(crate) fn accumulate(sum: &mut [f32], emb: &Embedding) {
 impl Shard {
     /// cluster the vectors in the block_vector_buffer, and return the medoids
     pub(crate) async fn cluster_vector_shard(&mut self, sort: bool) -> Vec<Medoid> {
+        let non_affine = self.max_vector_value == f32::MIN;
+
         let vector_count_block = self.block_vector_buffer.len();
         if vector_count_block < 10_000 {
             return vec![Medoid {
@@ -217,6 +219,7 @@ impl Shard {
                         scale_norm,
                         vector_similarity,
                         self.quantization,
+                        non_affine,
                     )
                 } else {
                     similarity_embedding(
@@ -225,6 +228,7 @@ impl Shard {
                         scale_norm,
                         vector_similarity,
                         self.quantization,
+                        non_affine,
                     )
                 };
                 if similarity > best_similarity {
@@ -261,6 +265,7 @@ impl Shard {
                             scale_norm,
                             vector_similarity,
                             self.quantization,
+                            non_affine,
                         )
                     } else {
                         similarity_embedding(
@@ -269,6 +274,7 @@ impl Shard {
                             scale_norm,
                             vector_similarity,
                             self.quantization,
+                            non_affine,
                         )
                     };
                     self.block_vector_buffer[i].similarity = similarity;
@@ -330,6 +336,7 @@ impl Shard {
                                     scale_norm,
                                     vector_similarity,
                                     self.quantization,
+                                    non_affine,
                                 )
                             } else {
                                 similarity_embedding(
@@ -338,6 +345,7 @@ impl Shard {
                                     scale_norm,
                                     vector_similarity,
                                     self.quantization,
+                                    non_affine,
                                 )
                             };
 
@@ -359,7 +367,6 @@ impl Shard {
                     if self.block_vector_buffer[i].is_medoid {
                         continue;
                     }
-
                     if i != medoid.medoid_index {
                         let scale_norm = if enable_scale {
                             Some((
@@ -386,6 +393,7 @@ impl Shard {
                                 scale_norm,
                                 vector_similarity,
                                 self.quantization,
+                                non_affine,
                             )
                         } else {
                             similarity_embedding(
@@ -394,6 +402,7 @@ impl Shard {
                                 scale_norm,
                                 vector_similarity,
                                 self.quantization,
+                                non_affine,
                             )
                         };
                         if similarity > self.block_vector_buffer[i].similarity {
@@ -493,6 +502,7 @@ impl Shard {
                             scale_norm,
                             vector_similarity,
                             self.quantization,
+                            non_affine,
                         )
                     } else {
                         similarity_embedding(
@@ -501,6 +511,7 @@ impl Shard {
                             scale_norm,
                             vector_similarity,
                             self.quantization,
+                            non_affine,
                         )
                     };
 
@@ -542,6 +553,7 @@ impl Shard {
                                     scale_norm,
                                     vector_similarity,
                                     self.quantization,
+                                    non_affine,
                                 )
                             } else {
                                 similarity_embedding(
@@ -550,6 +562,7 @@ impl Shard {
                                     scale_norm,
                                     vector_similarity,
                                     self.quantization,
+                                    non_affine,
                                 )
                             };
                             let vector = &mut self.block_vector_buffer[i];
@@ -627,6 +640,7 @@ impl Shard {
                                 scale_norm,
                                 vector_similarity,
                                 self.quantization,
+                                non_affine,
                             )
                         } else {
                             similarity_embedding(
@@ -635,6 +649,7 @@ impl Shard {
                                 scale_norm,
                                 vector_similarity,
                                 self.quantization,
+                                non_affine,
                             )
                         };
                         if similarity > self.block_vector_buffer[i].similarity {

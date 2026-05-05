@@ -1170,7 +1170,7 @@ pub struct Shard {
 
     /// Number of committed documents
     pub committed_doc_count: usize,
-    /// The index countains indexed, but uncommitted documents. Documents will either committed automatically once the number exceeds 64K documents **per shard** or once commit is invoked manually.
+    /// The index countains indexed, but uncommitted documents. Documents will either committed automatically once the number exceeds 64K documents **per shard**, or once commit is invoked manually.
     pub(crate) uncommitted: bool,
 
     /// Indicates whether the index has been modified since the start.
@@ -1271,7 +1271,6 @@ pub struct Shard {
     pub(crate) key_head_size: usize,
     pub(crate) level_terms: AHashMap<u32, String>,
     pub(crate) level_completions: Arc<RwLock<AHashMap<Vec<String>, usize>>>,
-
     pub(crate) is_avx2: bool,
     pub(crate) is_vector_indexing: bool,
     pub(crate) is_lexical_indexing: bool,

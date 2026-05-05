@@ -32,7 +32,8 @@ use crate::{
         IndexArc, IndexDocument, Info, META_FILENAME,
     },
     utils::{dir_size, truncate},
-    vector::{Embedding, embedding_to_json},
+    vector::{Embedding, Quantization, embedding_to_json},
+    vector_similarity::VectorSimilarity,
 };
 
 use lazy_static::lazy_static;
@@ -641,6 +642,20 @@ pub async fn display_index_info(
     time_value: String,
 ) {
     let index_ref = index_arc.read().await;
+
+    let non_affine_string = if index_ref.quantization == Quantization::ScalarQuantizationI8
+        && index_ref.vector_similarity == VectorSimilarity::Euclidean
+    {
+        let non_affine = index_ref.shard_vec[0].read().await.max_vector_value == f32::MIN;
+        if non_affine {
+            " (non-affine)".to_string()
+        } else {
+            " (affine)".to_string()
+        }
+    } else {
+        "".to_string()
+    };
+
     let index_path = index_ref.index_path_string.clone();
     let level_count = index_ref.level_count().await;
     let file_date = metadata(Path::new(&index_path).join(META_FILENAME))
@@ -675,6 +690,18 @@ pub async fn display_index_info(
         shard.read().await.docstore_file.sync_all().unwrap();
     }
     let index_size = dir_size(Path::new(&index_ref.index_path_string)).unwrap_or(0);
+
+    let dimensions_label = if index_ref.vector_dimensions != index_ref.vector_dimensions_original {
+        " (".to_owned()
+            + &index_ref.shard_vec[0]
+                .read()
+                .await
+                .vector_dimensions
+                .to_formatted_string(&Locale::en)
+            + " padded)"
+    } else {
+        "".to_string()
+    };
 
     let info_entries = vec![
         Info {
@@ -817,13 +844,17 @@ pub async fn display_index_info(
         },
         Info {
             entry: "dimensions",
-            value: index_ref.vector_dimensions.to_formatted_string(&Locale::en),
+            value: index_ref
+                .vector_dimensions_original
+                .to_formatted_string(&Locale::en)
+                + &dimensions_label,
         },
         Info {
             entry: "precision, quantization",
             value: index_ref.vector_precision.to_string()
                 + ", "
-                + &index_ref.quantization.to_string(),
+                + &index_ref.quantization.to_string()
+                + &non_affine_string,
         },
         Info {
             entry: "inference",

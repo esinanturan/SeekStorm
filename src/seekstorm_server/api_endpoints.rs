@@ -199,7 +199,7 @@ pub struct CreateIndexRequest {
     /// - NgramSet::NgramRFF = 0b00000101, (Ngram rare frequent frequent)
     /// - NgramSet::NgramFFR = 0b00000110, (Ngram frequent frequent rare)
     /// - NgramSet::NgramFRF = 0b00000111, (Ngram frequent rare frequent)
-    ///
+    /// 
     /// For example, to enable both NgramFF and NgramFFF, set ngram_indexing to 5 (1 | 4).
     /// Note: enabling n-gram indexing (ngram_indexing>0) will increase index size and indexing time, but improves search performance of phrase queries with frequent terms.
     #[serde(default = "ngram_indexing_api")]

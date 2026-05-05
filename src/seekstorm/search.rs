@@ -927,7 +927,7 @@ pub type Point = Vec<f64>;
 ///   * **Not**, except, minus `-`.
 ///
 /// The default QueryType is superseded if the query parser detects that a different query type is specified within the query string (`+` `-` `""`).
-///   
+///
 /// Boolean queries are specified in the search method either via the query_type parameter or via operator chars within the query parameter.
 /// The interpretation of operator chars within the query string (set `query_type=QueryType::Union`) allows to specify advanced search operations via a simple search box.
 ///
@@ -1506,23 +1506,35 @@ impl Search for IndexArc {
                             )
                         }
                         (VectorSimilarity::Euclidean, Quantization::ScalarQuantizationI8, true) => {
-                            let mut min_vector_value =
-                                index_ref.shard_vec[0].read().await.min_vector_value;
-                            let mut max_vector_value =
-                                index_ref.shard_vec[0].read().await.max_vector_value;
-                            let quantized_vector = QuantizedVector::new_scale_norm_affine_avx2(
-                                &mut min_vector_value,
-                                &mut max_vector_value,
-                                fvecs,
-                            );
-
-                            (
-                                Embedding::I8(quantized_vector.data),
-                                quantized_vector.scale,
-                                quantized_vector.norm,
-                                quantized_vector.zero_point,
-                                quantized_vector.sum_q,
-                            )
+                            let non_affine =
+                                index_ref.shard_vec[0].read().await.max_vector_value == f32::MIN;
+                            if non_affine {
+                                let quantized_vector = QuantizedVector::new_scale_norm_avx2(fvecs);
+                                (
+                                    Embedding::I8(quantized_vector.data),
+                                    quantized_vector.scale,
+                                    quantized_vector.norm,
+                                    0,
+                                    0,
+                                )
+                            } else {
+                                let mut min_vector_value =
+                                    index_ref.shard_vec[0].read().await.min_vector_value;
+                                let mut max_vector_value =
+                                    index_ref.shard_vec[0].read().await.max_vector_value;
+                                let quantized_vector = QuantizedVector::new_scale_norm_affine_avx2(
+                                    &mut min_vector_value,
+                                    &mut max_vector_value,
+                                    fvecs,
+                                );
+                                (
+                                    Embedding::I8(quantized_vector.data),
+                                    quantized_vector.scale,
+                                    quantized_vector.norm,
+                                    quantized_vector.zero_point,
+                                    quantized_vector.sum_q,
+                                )
+                            }
                         }
 
                         (_, Quantization::TurboQuantI8, true) => {
@@ -1542,23 +1554,35 @@ impl Search for IndexArc {
                             Quantization::ScalarQuantizationI8,
                             false,
                         ) => {
-                            let mut min_vector_value =
-                                index_ref.shard_vec[0].read().await.min_vector_value;
-                            let mut max_vector_value =
-                                index_ref.shard_vec[0].read().await.max_vector_value;
-                            let quantized_vector = QuantizedVector::new_scale_norm_affine(
-                                &mut min_vector_value,
-                                &mut max_vector_value,
-                                fvecs,
-                            );
-
-                            (
-                                Embedding::I8(quantized_vector.data),
-                                quantized_vector.scale,
-                                quantized_vector.norm,
-                                quantized_vector.zero_point,
-                                quantized_vector.sum_q,
-                            )
+                            let non_affine =
+                                index_ref.shard_vec[0].read().await.max_vector_value == f32::MIN;
+                            if non_affine {
+                                let quantized_vector = QuantizedVector::new_scale_norm(fvecs);
+                                (
+                                    Embedding::I8(quantized_vector.data),
+                                    quantized_vector.scale,
+                                    quantized_vector.norm,
+                                    0,
+                                    0,
+                                )
+                            } else {
+                                let mut min_vector_value =
+                                    index_ref.shard_vec[0].read().await.min_vector_value;
+                                let mut max_vector_value =
+                                    index_ref.shard_vec[0].read().await.max_vector_value;
+                                let quantized_vector = QuantizedVector::new_scale_norm_affine(
+                                    &mut min_vector_value,
+                                    &mut max_vector_value,
+                                    fvecs,
+                                );
+                                (
+                                    Embedding::I8(quantized_vector.data),
+                                    quantized_vector.scale,
+                                    quantized_vector.norm,
+                                    quantized_vector.zero_point,
+                                    quantized_vector.sum_q,
+                                )
+                            }
                         }
 
                         (_, Quantization::TurboQuantI8, false) => {
@@ -1947,7 +1971,6 @@ impl Search for IndexArc {
                             Result {
                                 doc_id: result.doc_id,
                                 score: 1.0 / (k + i as f32),
-
                                 #[cfg(feature = "vb")]
                                 lexical_score: result.score,
                                 #[cfg(feature = "vb")]
@@ -2091,6 +2114,7 @@ impl Search for IndexArc {
             if result_object.results.len() > length {
                 result_object.results.truncate(length);
             }
+
             result_object.result_count = result_object.results.len();
         }
 
@@ -2118,6 +2142,7 @@ pub(crate) fn binary_search(
         let mid = (left + right) / 2;
 
         let pivot = read_u64(byte_array, mid as usize * key_head_size);
+
         match pivot.cmp(&key_hash) {
             cmp::Ordering::Equal => {
                 return mid;
@@ -2141,7 +2166,6 @@ pub(crate) fn decode_posting_list_count(
     let offset = if previous { 1 } else { 0 };
 
     let mut posting_count_list = 0u32;
-
     let mut found = false;
 
     if segment.byte_array_blocks_pointer.len() <= offset {
@@ -2164,7 +2188,6 @@ pub(crate) fn decode_posting_list_count(
             found = true;
             let key_address = key_index as usize * index.key_head_size;
             let posting_count = read_u16(byte_array, key_address + 8);
-
             posting_count_list += posting_count as u32 + 1;
         }
     }
@@ -2453,7 +2476,6 @@ impl SearchLexicalShard for ShardArc {
             if result_type == ResultType::Topk {
                 return result_object;
             }
-
             result_type = ResultType::Count;
         }
 
@@ -2583,7 +2605,6 @@ impl SearchLexicalShard for ShardArc {
                             facet_filter_sparse[*idx] = FilterSparse::I64(filter.clone())
                         }
                     }
-
                     FacetFilter::Timestamp { field, filter } => {
                         if let Some(idx) = shard_ref.facets_map.get(field)
                             && shard_ref.facets[*idx].field_type == FieldType::Timestamp
@@ -2613,7 +2634,6 @@ impl SearchLexicalShard for ShardArc {
                                 let mut string_id_vec = Vec::new();
                                 for value in filter.iter() {
                                     let key = [value.clone()];
-
                                     if let Some(facet_value_id) = facet.values.get_index_of(&key[0])
                                     {
                                         string_id_vec.push(facet_value_id as u16);
@@ -2660,7 +2680,6 @@ impl SearchLexicalShard for ShardArc {
                                 let mut string_id_vec = Vec::new();
                                 for value in filter.iter() {
                                     let key = [value.clone()];
-
                                     if let Some(facet_value_id) = facet.values.get_index_of(&key[0])
                                     {
                                         string_id_vec.push(facet_value_id as u32);
@@ -2678,13 +2697,11 @@ impl SearchLexicalShard for ShardArc {
                                 let mut string_id_vec = Vec::new();
                                 for value in filter.iter() {
                                     let key = [value.clone()];
-
                                     if let Some(facet_value_id) =
                                         facet.values.get_index_of(&key.join("_"))
                                     {
                                         string_id_vec.push(facet_value_id as u32);
                                     }
-
                                     if let Some(facet_value_ids) = shard_ref
                                         .string_set_to_single_term_id_vec[*idx]
                                         .get(&value.clone())
@@ -2856,7 +2873,6 @@ impl SearchLexicalShard for ShardArc {
                             };
                         }
                     }
-
                     QueryFacet::Timestamp {
                         field,
                         range_type,
@@ -2924,7 +2940,6 @@ impl SearchLexicalShard for ShardArc {
                             }
                         }
                     }
-
                     QueryFacet::StringSet16 {
                         field,
                         prefix,
@@ -2958,7 +2973,6 @@ impl SearchLexicalShard for ShardArc {
                             }
                         }
                     }
-
                     QueryFacet::StringSet32 {
                         field,
                         prefix,
@@ -3007,14 +3021,12 @@ impl SearchLexicalShard for ShardArc {
         }
 
         let result_count_arc = Arc::new(AtomicUsize::new(0));
-
         let result_count_uncommitted_arc = Arc::new(AtomicUsize::new(0));
 
         'fallback: loop {
             let mut unique_terms: AHashMap<String, TermObject> = AHashMap::new();
             let mut non_unique_terms: Vec<NonUniqueTermObject> = Vec::new();
             let mut nonunique_terms_count = 0u32;
-
             tokenizer(
                 &shard_ref,
                 &query_string,
@@ -3074,7 +3086,6 @@ impl SearchLexicalShard for ShardArc {
                 let mut term_index_unique = 0;
                 if non_unique_term.op == QueryType::Not {
                     let query_list_map_len = not_query_list_map.len();
-
                     let not_query_list_option = not_query_list_map.get(&key_hash);
                     if not_query_list_option.is_none()
                         && !not_found_terms_hashset.contains(&key_hash)
@@ -3136,9 +3147,7 @@ impl SearchLexicalShard for ShardArc {
                                 term: term_no_diacritics_umlaut_case.clone(),
                                 key0,
                                 term_index_unique: query_list_map_len,
-
                                 idf,
-
                                 idf_ngram1,
                                 idf_ngram2,
                                 idf_ngram3,
@@ -3334,7 +3343,6 @@ impl SearchLexicalShard for ShardArc {
                         non_unique_query_list.push(nu_plo);
                     }
                 }
-
                 match term.ngram_type {
                     NgramType::SingleTerm => {}
                     NgramType::NgramFF | NgramType::NgramRF | NgramType::NgramFR => {
@@ -3379,6 +3387,7 @@ impl SearchLexicalShard for ShardArc {
 
             let mut matching_blocks: i32 = 0;
             let query_term_count = non_unique_terms.len();
+
             if query_list_len == 0 {
                 if enable_empty_query && query_string.is_empty() {
                     search_iterator_shard(
@@ -3423,6 +3432,7 @@ impl SearchLexicalShard for ShardArc {
                             result_object.results.truncate(length);
                         }
                     }
+
                     if !search_result.query_facets.is_empty() && result_type != ResultType::Topk {
                         let mut facets: AHashMap<String, Facet> = AHashMap::new();
                         for facet in search_result.query_facets.iter() {
@@ -3431,6 +3441,7 @@ impl SearchLexicalShard for ShardArc {
                             {
                                 continue;
                             }
+
                             let v = stopword_result_object.facets[&facet.field]
                                 .iter()
                                 .sorted_unstable_by(|a, b| b.1.cmp(&a.1))
@@ -3440,7 +3451,6 @@ impl SearchLexicalShard for ShardArc {
                                 })
                                 .take(facet.length.max(facet_cap) as usize)
                                 .collect::<Vec<_>>();
-
                             if !v.is_empty() {
                                 facets.insert(facet.field.clone(), v);
                             }
@@ -3467,7 +3477,6 @@ impl SearchLexicalShard for ShardArc {
                 .await;
             } else if query_type_mut == QueryType::Union {
                 search_result.skip_facet_count = true;
-
                 if result_type == ResultType::Count && query_list_len != 2 {
                     union_blockid(
                         &shard_ref,
@@ -3636,7 +3645,6 @@ impl SearchLexicalShard for ShardArc {
                                     *hash_map.entry(term.clone()).or_insert(0) += value.1;
                                 }
                             }
-
                             hash_map
                                 .iter()
                                 .sorted_unstable_by(|a, b| b.1.cmp(a.1))
@@ -3742,7 +3750,6 @@ impl SearchLexicalShard for ShardArc {
                                         Ranges::I64(_range_type, ranges) => {
                                             ranges[*a as usize].0.clone()
                                         }
-
                                         Ranges::Timestamp(_range_type, ranges) => {
                                             ranges[*a as usize].0.clone()
                                         }
@@ -3752,7 +3759,6 @@ impl SearchLexicalShard for ShardArc {
                                         Ranges::F64(_range_type, ranges) => {
                                             ranges[*a as usize].0.clone()
                                         }
-
                                         Ranges::Point(_range_type, ranges, _base, _unit) => {
                                             ranges[*a as usize].0.clone()
                                         }

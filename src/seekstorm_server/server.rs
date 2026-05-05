@@ -432,11 +432,11 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
 
                                     let query="";
 
-                                    let len=10;
+                                    let topk=10;
                                     let similarity_threshold=None;
                                     let field_filter=Vec::new();
                                     let fields_hashset=HashSet::new();
-                                    let search_mode=SearchMode::Vector { similarity_threshold , ann_mode: AnnMode::Nprobe(16)};
+                                    let search_mode=SearchMode::Vector { similarity_threshold , ann_mode:AnnMode::Nprobe(80)};
 
                                     let mut search_time_sum=0;
                                     let mut results_sum=0;
@@ -446,9 +446,8 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                     let mut recall_count_sum=0;
 
 
-                                    if let Ok(ground_truth) = read_ivecs(r"C:\linux_remote\testset\sift_groundtruth.ivecs") {
-
-                                    if let Ok(queries) = read_fvecs(r"C:\linux_remote\testset\sift_query.fvecs") {
+                                    if let Ok(ground_truth) = read_ivecs(r"C:\linux_remote\testset\gist_groundtruth.ivecs") {
+                                    if let Ok(queries) = read_fvecs(r"C:\linux_remote\testset\gist_query.fvecs") {
 
 
 
@@ -459,7 +458,7 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
 
                                         for (query_idx, query_embedding) in queries.into_iter().enumerate().take(queries_len) {
 
-                                            let ground_truth_for_query:IndexMap<usize, usize> = ground_truth[query_idx].iter().take(len).enumerate().map(|(i, x)| (*x as usize, i)).collect();
+                                            let ground_truth_for_query:IndexMap<usize, usize> = ground_truth[query_idx].iter().take(topk).enumerate().map(|(i, x)| (*x as usize, i)).collect();
 
 
                                             let query_embedding=Embedding::F32(query_embedding);
@@ -469,12 +468,12 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                             let result_object_vector = index_arc
                                             .search(
                                                 query.to_string(),
-                                                Some(query_embedding),
+                                                Some(query_embedding.clone()),
                                                 QueryType::Intersection,
                                                 search_mode.clone(),
                                                 false,
                                                 0,
-                                                len,
+                                                topk,
                                                 ResultType::Topk,
                                                 false,
                                                 field_filter.clone(),
@@ -503,6 +502,7 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                                 let idx=index_string.parse::<usize>().unwrap_or(0);
                                                 let flag=ground_truth_for_query.contains_key(&idx);
                                                 if flag { recall_count+=1; }
+
                                             }
 
 
@@ -521,7 +521,7 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                          (search_time_sum as usize/1000/queries_len).to_formatted_string(&Locale::en), results_sum.to_formatted_string(&Locale::en), result_count_total_sum.to_formatted_string(&Locale::en),
                                         (observed_cluster_count_sum as f64) / queries_len as f64 / (indexed_cluster_count as f64) * 100.0,(observed_cluster_count_sum/queries_len).to_formatted_string(&Locale::en) , indexed_cluster_count.to_formatted_string(&Locale::en),
                                         (observed_vector_count_sum as f64) / queries_len as f64 / (indexed_vector_count as f64) * 100.0,(observed_vector_count_sum/queries_len).to_formatted_string(&Locale::en) , indexed_vector_count.to_formatted_string(&Locale::en),
-                                        (recall_count_sum as f64) / queries_len as f64 / (len as f64) * 100.0);
+                                        (recall_count_sum as f64) / queries_len as f64 / (topk as f64) * 100.0);
                                         println!();
 
                                         }
@@ -754,12 +754,12 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                     None,
                                     false,
                                     Clustering::Auto,
-                                    Inference::External { dimensions: 128, precision: Precision::F32, quantization: Quantization::ScalarQuantizationI8,similarity:VectorSimilarity::Euclidean } ,
+                                    Inference::External { dimensions: 960 , precision: Precision::F32, quantization: Quantization::ScalarQuantizationI8,similarity:VectorSimilarity::Euclidean } ,
                                 ).await;
 
                                 let index_id=0;
                                 if let Some(index_arc) = apikey_object.index_list.get_mut(&index_id) {
-                                    ingest_sift(index_arc, Path::new(r"C:\linux_remote\testset\sift_base.fvecs"), None).await;
+                                    ingest_sift(index_arc, Path::new(r"C:\linux_remote\testset\gist_base.fvecs"), None).await;
                                 }
                             }
                         }

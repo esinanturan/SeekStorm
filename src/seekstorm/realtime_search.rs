@@ -286,6 +286,7 @@ pub(crate) fn add_result_multiterm_uncommitted(
                     std::cmp::Ordering::Equal => {
                         if t2 + 1 < non_unique_query_list.len() {
                             t2 += 1;
+
                             pos2 = non_unique_query_list[t2].pos;
                             continue;
                         }
@@ -1679,7 +1680,7 @@ impl Shard {
                             as u16;
                         field_vec.push((field_id, 4));
                         if phrase_query {
-                            let position_bits_1 = position_bits >> 2; // /4;
+                            let position_bits_1 = position_bits >> 2;
                             let position_bits_2 = (position_bits - position_bits_1) / 3;
                             let position_bits_3 =
                                 (position_bits - position_bits_1 - position_bits_2) >> 1;

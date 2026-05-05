@@ -208,13 +208,13 @@ See our **blog posts** for more detailed information: [SeekStorm is now Open Sou
 <br>
 <br>
 
-- [SIFT1M dataset](http://corpus-texmex.irisa.fr/) 1 million vectors, 128 dimensions, f32 precision, Euclidean  
+#### [SIFT1M dataset](http://corpus-texmex.irisa.fr/) 1 million vectors, 128 dimensions, f32 precision, Euclidean  
 - 8-bit Scalar Quantization, nprobe=16 -> recall@10=95%, average latency=188 microseconds  
 - 8-bit Scalar Quantization, nprobe=33 -> recall@10=99%, average latency=302 microseconds  
 
 <br>
 
-- [GIST1M dataset](http://corpus-texmex.irisa.fr/) 1 million vectors, 960 dimensions, f32 precision, Euclidean  
+#### [GIST1M dataset](http://corpus-texmex.irisa.fr/) 1 million vectors, 960 dimensions, f32 precision, Euclidean  
 - 8-bit Scalar Quantization, nprobe=38 -> recall@10=95%, average latency=3,198 microseconds  
 - 8-bit Scalar Quantization, nprobe=80 -> recall@10=98%, average latency=5,737 microseconds  
 
@@ -1876,6 +1876,5 @@ Are you missing something? Let us know via issue or discussions.
 	  - NEON 
 	  - SVE/SVE2 
 	- GPU (NVIDIA)
-
 
 

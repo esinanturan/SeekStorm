@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.3] - 2026-05-05
+
+### Added
+
+- For Euclidean, ScalarQuantizationI8, new non-affine quantization new_scale_norm_avx2 and new_scale_norm added.
+- For Euclidean, ScalarQuantizationI8, new non-affine similarity euclidean_i8_quantized_avx2 and euclidean_i8_quantized added.
+
+### Improved
+
+- For Euclidean, ScalarQuantizationI8 it is now automatically selected between affine and non-affine quantization (displayed in index info card), depending on the data. Always best recall.
+
 ## [3.1.2] - 2026-05-03
 
 ### Fixed

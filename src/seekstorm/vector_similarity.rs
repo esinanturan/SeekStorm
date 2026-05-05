@@ -127,6 +127,7 @@ pub(crate) fn similarity_embedding_view(
     scale_norm: Option<(f32, f32, i16, i32, f32, f32, i16, i32)>,
     vector_similarity: VectorSimilarity,
     quantization: Quantization,
+    non_affine: bool,
 ) -> f32 {
     match (a, vector_similarity, quantization) {
         (Embedding::I8(a), VectorSimilarity::Dot, Quantization::ScalarQuantizationI8) => {
@@ -260,18 +261,29 @@ pub(crate) fn similarity_embedding_view(
                     embedding_sum_q,
                 )) = scale_norm
                 {
-                    -euclidean_i8_quantized_affine(
-                        a,
-                        query_scale,
-                        query_norm,
-                        query_zero_point,
-                        query_sum_q,
-                        b,
-                        embedding_scale,
-                        embedding_norm,
-                        embedding_zero_point,
-                        embedding_sum_q,
-                    )
+                    if non_affine {
+                        -euclidean_i8_quantized(
+                            a,
+                            query_scale,
+                            query_norm,
+                            b,
+                            embedding_scale,
+                            embedding_norm,
+                        )
+                    } else {
+                        -euclidean_i8_quantized_affine(
+                            a,
+                            query_scale,
+                            query_norm,
+                            query_zero_point,
+                            query_sum_q,
+                            b,
+                            embedding_scale,
+                            embedding_norm,
+                            embedding_zero_point,
+                            embedding_sum_q,
+                        )
+                    }
                 } else {
                     -euclidean_i8(a, b)
                 }
@@ -333,6 +345,7 @@ pub(crate) fn similarity_embedding(
     scale_norm: Option<(f32, f32, i16, i32, f32, f32, i16, i32)>,
     vector_similarity: VectorSimilarity,
     quantization: Quantization,
+    non_affine: bool,
 ) -> f32 {
     match (a, vector_similarity, quantization) {
         (Embedding::I8(a), VectorSimilarity::Dot, Quantization::ScalarQuantizationI8) => {
@@ -467,18 +480,29 @@ pub(crate) fn similarity_embedding(
                     embedding_sum_q,
                 )) = scale_norm
                 {
-                    -euclidean_i8_quantized_affine(
-                        a,
-                        query_scale,
-                        query_norm,
-                        query_zero_point,
-                        query_sum_q,
-                        b,
-                        embedding_scale,
-                        embedding_norm,
-                        embedding_zero_point,
-                        embedding_sum_q,
-                    )
+                    if non_affine {
+                        -euclidean_i8_quantized(
+                            a,
+                            query_scale,
+                            query_norm,
+                            b,
+                            embedding_scale,
+                            embedding_norm,
+                        )
+                    } else {
+                        -euclidean_i8_quantized_affine(
+                            a,
+                            query_scale,
+                            query_norm,
+                            query_zero_point,
+                            query_sum_q,
+                            b,
+                            embedding_scale,
+                            embedding_norm,
+                            embedding_zero_point,
+                            embedding_sum_q,
+                        )
+                    }
                 } else {
                     -euclidean_i8(a, b)
                 }
@@ -539,6 +563,7 @@ pub(crate) unsafe fn similarity_embedding_view_avx2(
     scale_norm: Option<(f32, f32, i16, i32, f32, f32, i16, i32)>,
     vector_similarity: VectorSimilarity,
     quantization: Quantization,
+    non_affine: bool,
 ) -> f32 {
     unsafe {
         match (emb, vector_similarity, quantization) {
@@ -645,18 +670,29 @@ pub(crate) unsafe fn similarity_embedding_view_avx2(
                     embedding_sum_q,
                 )) = scale_norm
                 {
-                    -euclidean_i8_quantized_affine_avx2(
-                        query,
-                        query_scale,
-                        query_norm,
-                        query_zero_point,
-                        query_sum_q,
-                        e,
-                        embedding_scale,
-                        embedding_norm,
-                        embedding_zero_point,
-                        embedding_sum_q,
-                    )
+                    if non_affine {
+                        -euclidean_i8_quantized_avx2(
+                            query,
+                            query_scale,
+                            query_norm,
+                            e,
+                            embedding_scale,
+                            embedding_norm,
+                        )
+                    } else {
+                        -euclidean_i8_quantized_affine_avx2(
+                            query,
+                            query_scale,
+                            query_norm,
+                            query_zero_point,
+                            query_sum_q,
+                            e,
+                            embedding_scale,
+                            embedding_norm,
+                            embedding_zero_point,
+                            embedding_sum_q,
+                        )
+                    }
                 } else {
                     -euclidean_i8_avx2(query, e) as f32
                 }
@@ -703,6 +739,7 @@ pub(crate) unsafe fn similarity_embedding_avx2(
     scale_norm: Option<(f32, f32, i16, i32, f32, f32, i16, i32)>,
     vector_similarity: VectorSimilarity,
     quantization: Quantization,
+    non_affine: bool,
 ) -> f32 {
     unsafe {
         match (emb, vector_similarity, quantization) {
@@ -802,18 +839,29 @@ pub(crate) unsafe fn similarity_embedding_avx2(
                     embedding_sum_q,
                 )) = scale_norm
                 {
-                    -euclidean_i8_quantized_affine_avx2(
-                        query,
-                        query_scale,
-                        query_norm,
-                        query_zero_point,
-                        query_sum_q,
-                        e,
-                        embedding_scale,
-                        embedding_norm,
-                        embedding_zero_point,
-                        embedding_sum_q,
-                    )
+                    if non_affine {
+                        -euclidean_i8_quantized_avx2(
+                            query,
+                            query_scale,
+                            query_norm,
+                            e,
+                            embedding_scale,
+                            embedding_norm,
+                        )
+                    } else {
+                        -euclidean_i8_quantized_affine_avx2(
+                            query,
+                            query_scale,
+                            query_norm,
+                            query_zero_point,
+                            query_sum_q,
+                            e,
+                            embedding_scale,
+                            embedding_norm,
+                            embedding_zero_point,
+                            embedding_sum_q,
+                        )
+                    }
                 } else {
                     -euclidean_i8_avx2(query, e) as f32
                 }
@@ -1213,6 +1261,23 @@ impl QuantizedVector {
         }
     }
 
+    pub(crate) fn new_scale_norm(values: &[f32]) -> Self {
+        let max_val = values.iter().map(|x| x.abs()).fold(0.0, f32::max);
+        let scale = max_val / 127.0;
+
+        let data: Vec<i8> = values.iter().map(|&x| (x / scale).round() as i8).collect();
+
+        let norm: i32 = data.iter().map(|&x| x as i32 * x as i32).sum();
+
+        Self {
+            data,
+            scale,
+            norm: norm as f32 * scale * scale,
+            zero_point: 0,
+            sum_q: 0,
+        }
+    }
+
     #[cfg(target_arch = "x86_64")]
     pub(crate) fn new_scale_avx2(values: &[f32]) -> Self {
         unsafe {
@@ -1225,6 +1290,26 @@ impl QuantizedVector {
                 data,
                 scale,
                 norm: 0.0,
+                zero_point: 0,
+                sum_q: 0,
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn new_scale_norm_avx2(values: &[f32]) -> Self {
+        unsafe {
+            let max_val = Self::max_abs_avx2(values);
+            let scale = max_val / 127.0;
+
+            let data = quantize_avx2(values, scale);
+
+            let norm = squared_norm_avx2(&data);
+
+            Self {
+                data,
+                scale,
+                norm: norm as f32 * scale * scale,
                 zero_point: 0,
                 sum_q: 0,
             }
@@ -1534,6 +1619,36 @@ impl QuantizedVector {
     }
 }
 
+pub(crate) fn euclidean_i8_quantized(
+    v1: &[i8],
+    scale1: f32,
+    norm1: f32,
+    v2: &[i8],
+    scale2: f32,
+    norm2: f32,
+) -> f32 {
+    let dot_i32: i32 = v1.iter().zip(v2).map(|(&a, &b)| a as i32 * b as i32).sum();
+
+    let dot = dot_i32 as f32 * scale1 * scale2;
+
+    (norm1 + norm2 - 2.0 * dot).max(0.0)
+}
+
+fn euclidean_i8_quantized_avx2(
+    v1: &QuerySimd,
+    scale1: f32,
+    norm1: f32,
+    v2: &[i8],
+    scale2: f32,
+    norm2: f32,
+) -> f32 {
+    let dot_i32: i32 = unsafe { dot_i8_avx2(v1, v2) };
+
+    let dot = dot_i32 as f32 * scale1 * scale2;
+
+    (norm1 + norm2 - 2.0 * dot).max(0.0)
+}
+
 fn dot_i8_quantized(v1: &[i8], scale1: f32, v2: &[i8], scale2: f32) -> f32 {
     let dot_i32: i32 = v1.iter().zip(v2).map(|(&a, &b)| a as i32 * b as i32).sum();
 
@@ -1620,7 +1735,7 @@ impl TurboQuant {
         }
     }
 
-    pub fn new(_original_dim: usize, seed: u64) -> Self {
+    pub(crate) fn new(_original_dim: usize, seed: u64) -> Self {
         let dim = Self::next_power_of_two(_original_dim);
 
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -1689,8 +1804,8 @@ impl TurboQuant {
             h *= 2;
         }
 
+        let norm_val = (n as f32).sqrt();
         unsafe {
-            let norm_val = (n as f32).sqrt();
             let v_norm = _mm256_set1_ps(norm_val);
             for i in (0..n).step_by(8) {
                 let v = _mm256_loadu_ps(a.as_ptr().add(i));
@@ -1741,7 +1856,7 @@ impl TurboQuant {
 
         unsafe { Self::fwht_avx2(&mut padded_data) };
 
-        let scale = unsafe { self.calculate_scale_avx2(&padded_data) }; // !????
+        let scale = unsafe { self.calculate_scale_avx2(&padded_data) };
 
         let quantized = unsafe { quantize_avx2(&padded_data, scale) };
 
