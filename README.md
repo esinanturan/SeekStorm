@@ -1846,6 +1846,7 @@ Are you missing something? Let us know via issue or discussions.
 
 * ✅ Native vector search
 * ✅ TurboQuant (TQ) for vector search
+* Late Interaction Multimodal Retrieval
 * Geocoding, reverse geocoding, GeoJSON
 * Model Context Protocol (MCP) server for Retrieval Augmented Generation (RAG)
 * **Split of storage and compute**
