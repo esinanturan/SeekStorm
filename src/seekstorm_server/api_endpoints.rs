@@ -17,11 +17,11 @@ use seekstorm::{
     highlighter::{Highlight, highlighter},
     index::{
         AccessType, Close, Clustering, DeleteDocument, DeleteDocuments, DeleteDocumentsByQuery,
-        DistanceField, Document, DocumentCompression, Facet, FileType, FrequentwordType,
-        IS_SYSTEM_LE, IndexArc, IndexDocument, IndexDocuments, IndexMetaObject, LexicalSimilarity,
-        MinMaxFieldJson, NgramSet, QueryCompletion, SchemaField, SpellingCorrection, StemmerType,
-        StopwordType, Synonym, TokenizerType, UpdateDocument, UpdateDocuments, create_index,
-        open_index,
+        DistanceField, Document, DocumentCompression, Facet, FileType, FrequentwordType, IS_AVX2,
+        IS_NEON, IS_SYSTEM_LE, IndexArc, IndexDocument, IndexDocuments, IndexMetaObject,
+        LexicalSimilarity, MinMaxFieldJson, NgramSet, QueryCompletion, SchemaField,
+        SpellingCorrection, StemmerType, StopwordType, Synonym, TokenizerType, UpdateDocument,
+        UpdateDocuments, create_index, open_index,
     },
     ingest::IndexPdfBytes,
     iterator::{GetIterator, IteratorResult},
@@ -199,7 +199,7 @@ pub struct CreateIndexRequest {
     /// - NgramSet::NgramRFF = 0b00000101, (Ngram rare frequent frequent)
     /// - NgramSet::NgramFFR = 0b00000110, (Ngram frequent frequent rare)
     /// - NgramSet::NgramFRF = 0b00000111, (Ngram frequent rare frequent)
-    /// 
+    ///
     /// For example, to enable both NgramFF and NgramFFF, set ngram_indexing to 5 (1 | 4).
     /// Note: enabling n-gram indexing (ngram_indexing>0) will increase index size and indexing time, but improves search performance of phrase queries with frequent terms.
     #[serde(default = "ngram_indexing_api")]
@@ -394,7 +394,14 @@ pub(crate) fn save_apikey_data(apikey: &ApikeyObject, index_path: &PathBuf) {
     )
 )]
 pub(crate) fn live_api() -> String {
-    "SeekStorm server ".to_owned() + VERSION
+    let simd = if *IS_AVX2 {
+        " (AVX2 enabled)"
+    } else if *IS_NEON {
+        " (NEON enabled)"
+    } else {
+        " (SIMD disabled)"
+    };
+    "SeekStorm server ".to_owned() + VERSION + simd
 }
 
 /// Create API Key

@@ -1873,8 +1873,8 @@ Are you missing something? Let us know via issue or discussions.
 	  - ✅ AVX2
 	  - AVX512
 	  - AVX10
-	- AArch64 (Apple Silicon, AWS Graviton)
-	  - NEON 
+	- ✅ AArch64 (Apple Silicon, AWS Graviton)
+	  - ✅ NEON 
 	  - SVE/SVE2 
 	- GPU (NVIDIA)
 

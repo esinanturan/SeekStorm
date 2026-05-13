@@ -1271,7 +1271,14 @@ pub struct Shard {
     pub(crate) key_head_size: usize,
     pub(crate) level_terms: AHashMap<u32, String>,
     pub(crate) level_completions: Arc<RwLock<AHashMap<Vec<String>, usize>>>,
+
+    /// AVX2 (x86_64) support enabled.
     pub(crate) is_avx2: bool,
+    /// NEON (aarch64) support enabled.
+    pub(crate) is_neon: bool,
+    /// Any SIMD backend (`is_avx2 || is_neon`). Call sites dispatch on this
+    /// to pick between the `*_simd` SIMD path and the scalar fallback.
+    pub(crate) is_simd: bool,
     pub(crate) is_vector_indexing: bool,
     pub(crate) is_lexical_indexing: bool,
     pub(crate) chunks_meta: Vec<(u16, u32, u32)>,
@@ -1285,7 +1292,6 @@ pub struct Shard {
     pub(crate) quantization: Quantization,
     pub(crate) vector_similarity: VectorSimilarity,
     pub(crate) chunk_size: usize,
-
     pub(crate) min_vector_value: f32,
     pub(crate) max_vector_value: f32,
     pub(crate) turbo_quant: TurboQuant,
@@ -1355,7 +1361,11 @@ pub struct Index {
     /// Vector similarity function for approximate nearest neighbor (ANN) search: Cosine, Euclidean, DotProduct.
     pub vector_similarity: VectorSimilarity,
     /// AVX2 support enabled
-    pub is_avx2: bool,
+    pub(crate) is_avx2: bool,
+    /// NEON support enabled (aarch64 only).
+    pub(crate) is_neon: bool,
+    /// Any SIMD backend enabled (`is_avx2 || is_neon`).
+    pub(crate) is_simd: bool,
     pub(crate) is_vector_indexing: bool,
     pub(crate) is_lexical_indexing: bool,
     pub(crate) chunk_size: usize,
@@ -1846,6 +1856,8 @@ pub(crate) async fn create_index_root(
                         shard.quantization = quantization;
                         shard.vector_similarity = vector_similarity;
                         shard.is_avx2 = *IS_AVX2;
+                        shard.is_neon = *IS_NEON;
+                        shard.is_simd = *IS_SIMD;
                         shard.chunk_size = chunk_size;
                         shard.turbo_quant = turbo_quant_clone;
 
@@ -1926,6 +1938,8 @@ pub(crate) async fn create_index_root(
                 quantization,
                 vector_similarity,
                 is_avx2: *IS_AVX2,
+                is_neon: *IS_NEON,
+                is_simd: *IS_SIMD,
                 is_vector_indexing,
                 is_lexical_indexing,
                 chunk_size,
@@ -2413,6 +2427,8 @@ pub(crate) fn create_shard(
                 quantization: Quantization::None,
                 vector_similarity: VectorSimilarity::Dot,
                 is_avx2: false,
+                is_neon: false,
+                is_simd: false,
                 chunk_size: 0,
                 min_vector_value: f32::MAX,
                 max_vector_value: f32::MIN,
@@ -3513,6 +3529,8 @@ pub async fn open_index(index_path: &Path) -> Result<IndexArc, String> {
                                 shard_arc.write().await.vector_similarity =
                                     index_arc.read().await.vector_similarity;
                                 shard_arc.write().await.is_avx2 = index_arc.read().await.is_avx2;
+                                shard_arc.write().await.is_neon = index_arc.read().await.is_neon;
+                                shard_arc.write().await.is_simd = index_arc.read().await.is_simd;
                                 shard_arc.write().await.chunk_size =
                                     index_arc.read().await.chunk_size;
 
@@ -3661,6 +3679,21 @@ pub static IS_AVX2: LazyLock<bool> = LazyLock::new(|| {
     let is_avx2 = false;
     is_avx2
 });
+
+/// NEON support enabled (always `true` on aarch64 — Advanced SIMD is a
+/// mandatory part of ARMv8). The flag exists for parity with `IS_AVX2`
+/// so the rest of the crate can branch on it the same way.
+pub static IS_NEON: LazyLock<bool> = LazyLock::new(|| {
+    #[cfg(target_arch = "aarch64")]
+    let is_neon = std::arch::is_aarch64_feature_detected!("neon");
+    #[cfg(not(target_arch = "aarch64"))]
+    let is_neon = false;
+    is_neon
+});
+
+/// Any SIMD backend (AVX2 / NEON) is available. Used by call sites to gate
+/// the SIMD path; on archs without a backend this is always `false`.
+pub static IS_SIMD: LazyLock<bool> = LazyLock::new(|| *IS_AVX2 || *IS_NEON);
 
 #[cfg(not(all(target_feature = "aes", target_feature = "sse2", feature = "gx")))]
 use ahash::RandomState;

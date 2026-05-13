@@ -144,11 +144,20 @@ impl Commit for IndexArc {
                 println!(
                     "commit index {} level {} committed documents {} {} committed vectors {} {}",
                     index_ref.meta.id,
-                    index_ref.level_count().await,
-                    uncommitted_doc_count,
-                    index_ref.indexed_doc_count().await,
-                    uncommitted_vec_count,
-                    index_ref.indexed_vector_count().await
+                    index_ref
+                        .level_count()
+                        .await
+                        .to_formatted_string(&Locale::en),
+                    uncommitted_doc_count.to_formatted_string(&Locale::en),
+                    index_ref
+                        .indexed_doc_count()
+                        .await
+                        .to_formatted_string(&Locale::en),
+                    uncommitted_vec_count.to_formatted_string(&Locale::en),
+                    index_ref
+                        .indexed_vector_count()
+                        .await
+                        .to_formatted_string(&Locale::en)
                 );
             }
         }

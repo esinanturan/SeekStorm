@@ -177,7 +177,6 @@ pub(crate) async fn tokenizer(
                     };
                 }
             }
-
             TokenizerType::UnicodeAlphanumeric => {
                 text_normalized = text.to_lowercase();
                 for char in text_normalized.char_indices() {

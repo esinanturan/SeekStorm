@@ -8,8 +8,8 @@ use num_format::{Locale, ToFormattedString};
 
 use seekstorm::{
     index::{
-        Close, Clustering, DocumentCompression, FrequentwordType, IS_AVX2, Info, LexicalSimilarity,
-        NgramSet, StemmerType, StopwordType, TokenizerType,
+        Close, Clustering, DocumentCompression, FrequentwordType, IS_AVX2, IS_NEON, Info,
+        LexicalSimilarity, NgramSet, StemmerType, StopwordType, TokenizerType,
     },
     ingest::{
         IngestCsv, IngestJson, IngestPdf, display_index_info, ingest_sift, read_fvecs, read_ivecs,
@@ -153,12 +153,21 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
             value: index_path.display().to_string(),
         },
         Info {
-            entry: "AVX2 enabled",
-            value: IS_AVX2.to_string(),
+            entry: "SIMD",
+            value: if *IS_AVX2 {
+                "AVX2".to_string()
+            } else if *IS_NEON {
+                "NEON".to_string()
+            } else {
+                "disabled".to_string()
+            },
         },
         Info {
             entry: "web server (UI, REST API) ",
-            value: format!("{}:{}", local_ip, local_port),
+            value: format!(
+                "http://localhost:{}  ({}:{})",
+                local_port, local_ip, local_port
+            ),
         },
         Info {
             entry: "master key ⚠️",
@@ -436,7 +445,7 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                     let similarity_threshold=None;
                                     let field_filter=Vec::new();
                                     let fields_hashset=HashSet::new();
-                                    let search_mode=SearchMode::Vector { similarity_threshold , ann_mode:AnnMode::Nprobe(80)};
+                                    let search_mode=SearchMode::Vector { similarity_threshold , ann_mode:AnnMode::Nprobe(16)};
 
                                     let mut search_time_sum=0;
                                     let mut results_sum=0;
@@ -446,8 +455,8 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                     let mut recall_count_sum=0;
 
 
-                                    if let Ok(ground_truth) = read_ivecs(r"C:\linux_remote\testset\gist_groundtruth.ivecs") {
-                                    if let Ok(queries) = read_fvecs(r"C:\linux_remote\testset\gist_query.fvecs") {
+                                    if let Ok(ground_truth) = read_ivecs(r"C:\linux_remote\testset\sift_groundtruth.ivecs") {
+                                    if let Ok(queries) = read_fvecs(r"C:\linux_remote\testset\sift_query.fvecs") {
 
 
 
@@ -754,12 +763,12 @@ pub(crate) async fn initialize(params: HashMap<String, String>) {
                                     None,
                                     false,
                                     Clustering::Auto,
-                                    Inference::External { dimensions: 960 , precision: Precision::F32, quantization: Quantization::ScalarQuantizationI8,similarity:VectorSimilarity::Euclidean } ,
+                                    Inference::External { dimensions: 128 , precision: Precision::F32, quantization: Quantization::ScalarQuantizationI8,similarity:VectorSimilarity::Euclidean } ,
                                 ).await;
 
                                 let index_id=0;
                                 if let Some(index_arc) = apikey_object.index_list.get_mut(&index_id) {
-                                    ingest_sift(index_arc, Path::new(r"C:\linux_remote\testset\gist_base.fvecs"), None).await;
+                                    ingest_sift(index_arc, Path::new(r"C:\linux_remote\testset\sift_base.fvecs"), None).await;
                                 }
                             }
                         }

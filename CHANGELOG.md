@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-05-12
+
+### Added
+
+- Vector search now with NEON SIMD acceleration for the AArch64 target (Apple Silicon, AWS Graviton).
+- The REST API info endpoint /api/v1/live now returns information weather SIMD is enabled or not.
+- Server info card 
+  - SIMD entry: AVX2/Neon/None
+  - Web server (UI, REST API) entry: now has a clickable URL to the embedded web UI.
+
+### Fixed
+
+- Vector search performance regression fixed: #[inline(always)]
+- Compile error for the AArch64 target (since v3.0.0) fixed. Fixes issue #61. 
+
 ## [3.1.3] - 2026-05-05
 
 ### Added

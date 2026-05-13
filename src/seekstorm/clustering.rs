@@ -2,6 +2,8 @@ use std::cmp::Ordering;
 
 use itertools::Itertools;
 use num::integer::Roots;
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
@@ -9,7 +11,7 @@ use crate::{
     index::{Clustering, Shard},
     vector::{Embedding, Quantization},
     vector_similarity::{
-        QuerySimd, VectorSimilarity, similarity_embedding, similarity_embedding_avx2,
+        QuerySimd, VectorSimilarity, similarity_embedding, similarity_embedding_simd,
     },
 };
 
@@ -133,6 +135,85 @@ pub(crate) fn accumulate_avx2(sum: &mut [f32], emb: &Embedding) {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+unsafe fn accumulate_f32_neon(sum: &mut [f32], emb: &[f32]) {
+    unsafe {
+        let len = emb.len();
+        let mut i = 0;
+        while i + 16 <= len {
+            let v0 = vld1q_f32(emb.as_ptr().add(i));
+            let v1 = vld1q_f32(emb.as_ptr().add(i + 4));
+            let v2 = vld1q_f32(emb.as_ptr().add(i + 8));
+            let v3 = vld1q_f32(emb.as_ptr().add(i + 12));
+            let s0 = vld1q_f32(sum.as_ptr().add(i));
+            let s1 = vld1q_f32(sum.as_ptr().add(i + 4));
+            let s2 = vld1q_f32(sum.as_ptr().add(i + 8));
+            let s3 = vld1q_f32(sum.as_ptr().add(i + 12));
+            vst1q_f32(sum.as_mut_ptr().add(i), vaddq_f32(s0, v0));
+            vst1q_f32(sum.as_mut_ptr().add(i + 4), vaddq_f32(s1, v1));
+            vst1q_f32(sum.as_mut_ptr().add(i + 8), vaddq_f32(s2, v2));
+            vst1q_f32(sum.as_mut_ptr().add(i + 12), vaddq_f32(s3, v3));
+            i += 16;
+        }
+        for j in i..len {
+            *sum.get_unchecked_mut(j) += *emb.get_unchecked(j);
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn accumulate_i8_neon(sum: &mut [f32], emb: &[i8]) {
+    unsafe {
+        let len = emb.len();
+        let mut i = 0;
+        while i + 16 <= len {
+            let bytes = vld1q_s8(emb.as_ptr().add(i));
+            let lo_i16 = vmovl_s8(vget_low_s8(bytes));
+            let hi_i16 = vmovl_s8(vget_high_s8(bytes));
+            let lo_lo = vcvtq_f32_s32(vmovl_s16(vget_low_s16(lo_i16)));
+            let lo_hi = vcvtq_f32_s32(vmovl_s16(vget_high_s16(lo_i16)));
+            let hi_lo = vcvtq_f32_s32(vmovl_s16(vget_low_s16(hi_i16)));
+            let hi_hi = vcvtq_f32_s32(vmovl_s16(vget_high_s16(hi_i16)));
+            let s0 = vld1q_f32(sum.as_ptr().add(i));
+            let s1 = vld1q_f32(sum.as_ptr().add(i + 4));
+            let s2 = vld1q_f32(sum.as_ptr().add(i + 8));
+            let s3 = vld1q_f32(sum.as_ptr().add(i + 12));
+            vst1q_f32(sum.as_mut_ptr().add(i), vaddq_f32(s0, lo_lo));
+            vst1q_f32(sum.as_mut_ptr().add(i + 4), vaddq_f32(s1, lo_hi));
+            vst1q_f32(sum.as_mut_ptr().add(i + 8), vaddq_f32(s2, hi_lo));
+            vst1q_f32(sum.as_mut_ptr().add(i + 12), vaddq_f32(s3, hi_hi));
+            i += 16;
+        }
+        for j in i..len {
+            *sum.get_unchecked_mut(j) += *emb.get_unchecked(j) as f32;
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn accumulate_neon(sum: &mut [f32], emb: &Embedding) {
+    match emb {
+        Embedding::I8(emb) => unsafe { accumulate_i8_neon(sum, emb) },
+        Embedding::F32(emb) => unsafe { accumulate_f32_neon(sum, emb) },
+    }
+}
+
+#[inline(always)]
+pub(crate) fn accumulate_simd(sum: &mut [f32], emb: &Embedding) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        accumulate_avx2(sum, emb)
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        accumulate_neon(sum, emb)
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        accumulate(sum, emb)
+    }
+}
+
 pub(crate) fn accumulate(sum: &mut [f32], emb: &Embedding) {
     match emb {
         Embedding::I8(emb) => sum
@@ -185,8 +266,8 @@ impl Shard {
             let mut sum_vector = vec![0f32; self.vector_dimensions];
             for i in (0..vector_count_block).step_by(vector_step) {
                 let embedding = &self.block_vector_buffer[i].embedding;
-                if self.is_avx2 {
-                    accumulate_avx2(&mut sum_vector, embedding);
+                if self.is_simd {
+                    accumulate_simd(&mut sum_vector, embedding);
                 } else {
                     accumulate(&mut sum_vector, embedding);
                 }
@@ -212,8 +293,8 @@ impl Shard {
             let mut best_similarity = f32::MIN;
             for (i, medoid_candidate) in self.block_vector_buffer.iter().enumerate() {
                 let scale_norm = None;
-                let similarity = if self.is_avx2 {
-                    similarity_embedding_avx2(
+                let similarity = if self.is_simd {
+                    similarity_embedding_simd(
                         &query_simd,
                         &medoid_candidate.embedding,
                         scale_norm,
@@ -258,8 +339,8 @@ impl Shard {
                     } else {
                         None
                     };
-                    let similarity = if self.is_avx2 {
-                        similarity_embedding_avx2(
+                    let similarity = if self.is_simd {
+                        similarity_embedding_simd(
                             &query_simd,
                             &self.block_vector_buffer[i].embedding,
                             scale_norm,
@@ -329,8 +410,8 @@ impl Shard {
                             } else {
                                 None
                             };
-                            let similarity = if self.is_avx2 {
-                                similarity_embedding_avx2(
+                            let similarity = if self.is_simd {
+                                similarity_embedding_simd(
                                     &record_outer_simd,
                                     &self.block_vector_buffer[j].embedding,
                                     scale_norm,
@@ -382,8 +463,8 @@ impl Shard {
                         } else {
                             None
                         };
-                        let similarity = if self.is_avx2 {
-                            similarity_embedding_avx2(
+                        let similarity = if self.is_simd {
+                            similarity_embedding_simd(
                                 &QuerySimd::new(
                                     &self.block_vector_buffer[medoid.medoid_index]
                                         .embedding
@@ -464,8 +545,8 @@ impl Shard {
                     let embedding = &self.block_vector_buffer[i].embedding;
                     let medoid_index = self.block_vector_buffer[i].medoid_index;
                     let centroid = centroid_map.get_mut(&medoid_index).unwrap();
-                    if self.is_avx2 {
-                        accumulate_avx2(&mut centroid.sum_vector, embedding);
+                    if self.is_simd {
+                        accumulate_simd(&mut centroid.sum_vector, embedding);
                     } else {
                         accumulate(&mut centroid.sum_vector, embedding);
                     }
@@ -495,8 +576,8 @@ impl Shard {
                 for (i, medoid_candidate) in self.block_vector_buffer.iter().enumerate() {
                     let medoid_index = self.block_vector_buffer[i].medoid_index;
                     let scale_norm = None;
-                    let similarity = if self.is_avx2 {
-                        similarity_embedding_avx2(
+                    let similarity = if self.is_simd {
+                        similarity_embedding_simd(
                             &centroid_map[&medoid_index].query_simd,
                             &medoid_candidate.embedding,
                             scale_norm,
@@ -542,8 +623,8 @@ impl Shard {
                             } else {
                                 None
                             };
-                            let similarity = if self.is_avx2 {
-                                similarity_embedding_avx2(
+                            let similarity = if self.is_simd {
+                                similarity_embedding_simd(
                                     &QuerySimd::new(
                                         &self.block_vector_buffer[new_medoid_index]
                                             .embedding
@@ -633,8 +714,8 @@ impl Shard {
                         } else {
                             None
                         };
-                        let similarity = if self.is_avx2 {
-                            similarity_embedding_avx2(
+                        let similarity = if self.is_simd {
+                            similarity_embedding_simd(
                                 &centroid_map[medoid_index].query_simd,
                                 &self.block_vector_buffer[i].embedding,
                                 scale_norm,

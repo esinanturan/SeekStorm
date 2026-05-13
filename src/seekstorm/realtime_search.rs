@@ -286,7 +286,6 @@ pub(crate) fn add_result_multiterm_uncommitted(
                     std::cmp::Ordering::Equal => {
                         if t2 + 1 < non_unique_query_list.len() {
                             t2 += 1;
-
                             pos2 = non_unique_query_list[t2].pos;
                             continue;
                         }

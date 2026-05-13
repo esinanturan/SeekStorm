@@ -15,8 +15,8 @@ use crate::utils::{
 use crate::vector::ResultSource;
 use crate::vector::{Embedding, Inference, Quantization, SearchVectorShard};
 use crate::vector_similarity::{
-    AnnMode, QuantizedVector, VectorSimilarity, normalize_f32, normalize_f32_avx2,
-    quantize_f32_to_i8, quantize_f32_to_i8_avx2,
+    AnnMode, QuantizedVector, VectorSimilarity, normalize_f32, normalize_f32_simd,
+    quantize_f32_to_i8, quantize_f32_to_i8_simd,
 };
 use crate::{
     index::{
@@ -927,7 +927,7 @@ pub type Point = Vec<f64>;
 ///   * **Not**, except, minus `-`.
 ///
 /// The default QueryType is superseded if the query parser detects that a different query type is specified within the query string (`+` `-` `""`).
-///
+///   
 /// Boolean queries are specified in the search method either via the query_type parameter or via operator chars within the query parameter.
 /// The interpretation of operator chars within the query string (set `query_type=QueryType::Union`) allows to specify advanced search operations via a simple search box.
 ///
@@ -1460,9 +1460,9 @@ impl Search for IndexArc {
                     && matches!(index_ref.meta.inference, Inference::External { .. })
                     && let Embedding::F32(ref mut fvecs) = qv
                 {
-                    if index_ref.is_avx2 {
+                    if index_ref.is_simd {
                         unsafe {
-                            normalize_f32_avx2(fvecs);
+                            normalize_f32_simd(fvecs);
                         }
                     } else {
                         normalize_f32(fvecs);
@@ -1476,17 +1476,17 @@ impl Search for IndexArc {
                     match (
                         index_ref.vector_similarity,
                         index_ref.quantization,
-                        index_ref.is_avx2,
+                        index_ref.is_simd,
                     ) {
                         (VectorSimilarity::Cosine, Quantization::ScalarQuantizationI8, true) => {
-                            (unsafe { quantize_f32_to_i8_avx2(fvecs) }, 1.0, 0.0, 0, 0)
+                            (unsafe { quantize_f32_to_i8_simd(fvecs) }, 1.0, 0.0, 0, 0)
                         }
                         (VectorSimilarity::Cosine, Quantization::ScalarQuantizationI8, false) => {
                             (quantize_f32_to_i8(fvecs), 1.0, 0.0, 0, 0)
                         }
 
                         (VectorSimilarity::Dot, Quantization::ScalarQuantizationI8, true) => {
-                            let quantized_vector = QuantizedVector::new_scale_avx2(fvecs);
+                            let quantized_vector = QuantizedVector::new_scale_simd(fvecs);
                             (
                                 Embedding::I8(quantized_vector.data),
                                 quantized_vector.scale,
@@ -1509,7 +1509,7 @@ impl Search for IndexArc {
                             let non_affine =
                                 index_ref.shard_vec[0].read().await.max_vector_value == f32::MIN;
                             if non_affine {
-                                let quantized_vector = QuantizedVector::new_scale_norm_avx2(fvecs);
+                                let quantized_vector = QuantizedVector::new_scale_norm_simd(fvecs);
                                 (
                                     Embedding::I8(quantized_vector.data),
                                     quantized_vector.scale,
@@ -1522,7 +1522,7 @@ impl Search for IndexArc {
                                     index_ref.shard_vec[0].read().await.min_vector_value;
                                 let mut max_vector_value =
                                     index_ref.shard_vec[0].read().await.max_vector_value;
-                                let quantized_vector = QuantizedVector::new_scale_norm_affine_avx2(
+                                let quantized_vector = QuantizedVector::new_scale_norm_affine_simd(
                                     &mut min_vector_value,
                                     &mut max_vector_value,
                                     fvecs,
@@ -1539,7 +1539,7 @@ impl Search for IndexArc {
 
                         (_, Quantization::TurboQuantI8, true) => {
                             let quantized_vector =
-                                index_ref.turbo_quant.quantize_f32_i8_avx2(fvecs);
+                                index_ref.turbo_quant.quantize_f32_i8_simd(fvecs);
 
                             (
                                 Embedding::I8(quantized_vector.data),
@@ -1608,8 +1608,8 @@ impl Search for IndexArc {
                     || index_ref.quantization == Quantization::TurboQuantI8
                 {
                     (
-                        if index_ref.is_avx2 {
-                            unsafe { quantize_f32_to_i8_avx2(&fvecs) }
+                        if index_ref.is_simd {
+                            unsafe { quantize_f32_to_i8_simd(&fvecs) }
                         } else {
                             quantize_f32_to_i8(&fvecs)
                         },
@@ -1971,6 +1971,7 @@ impl Search for IndexArc {
                             Result {
                                 doc_id: result.doc_id,
                                 score: 1.0 / (k + i as f32),
+
                                 #[cfg(feature = "vb")]
                                 lexical_score: result.score,
                                 #[cfg(feature = "vb")]
@@ -2142,7 +2143,6 @@ pub(crate) fn binary_search(
         let mid = (left + right) / 2;
 
         let pivot = read_u64(byte_array, mid as usize * key_head_size);
-
         match pivot.cmp(&key_hash) {
             cmp::Ordering::Equal => {
                 return mid;
@@ -2464,7 +2464,6 @@ impl SearchLexicalShard for ShardArc {
         }
 
         let mut query_type_mut = query_type_default;
-
         let facet_cap = if shard_ref.shard_number == 1 {
             0
         } else {
@@ -2532,7 +2531,6 @@ impl SearchLexicalShard for ShardArc {
         } else {
             0
         };
-
         let mut search_result = SearchResult {
             topk_candidates: MinHeap::new(
                 heap_size,
@@ -2651,13 +2649,11 @@ impl SearchLexicalShard for ShardArc {
                                 let mut string_id_vec = Vec::new();
                                 for value in filter.iter() {
                                     let key = [value.clone()];
-
                                     if let Some(facet_value_id) =
                                         facet.values.get_index_of(&key.join("_"))
                                     {
                                         string_id_vec.push(facet_value_id as u16);
                                     }
-
                                     if let Some(facet_value_ids) = shard_ref
                                         .string_set_to_single_term_id_vec[*idx]
                                         .get(&value.clone())
@@ -3058,7 +3054,6 @@ impl SearchLexicalShard for ShardArc {
                     offset + length,
                 );
             }
-
             let mut query_list_map: AHashMap<u64, PostingListObjectQuery> = AHashMap::new();
             let mut query_list: Vec<PostingListObjectQuery>;
 
@@ -3071,7 +3066,6 @@ impl SearchLexicalShard for ShardArc {
             let mut blocks_vec: Vec<Vec<BlockObjectIndex>> = Vec::new();
 
             let mut not_found_terms_hashset: AHashSet<u64> = AHashSet::new();
-
             for non_unique_term in non_unique_terms.iter() {
                 let term = unique_terms.get(&non_unique_term.term).unwrap();
                 let key0: u32 = term.key0;
@@ -3121,7 +3115,6 @@ impl SearchLexicalShard for ShardArc {
                                 [key0 as usize]
                                 .segment
                                 .get(&key_hash);
-
                             if let Some(plo) = posting_list_object_index_option {
                                 posting_count = plo.posting_count;
                                 max_list_score = plo.max_list_score;
@@ -3227,7 +3220,6 @@ impl SearchLexicalShard for ShardArc {
                                         false
                                     }
                                 };
-
                                 if found_plo {
                                     if result_type != ResultType::Count {
                                         if non_unique_term.ngram_type == NgramType::SingleTerm
@@ -3387,7 +3379,6 @@ impl SearchLexicalShard for ShardArc {
 
             let mut matching_blocks: i32 = 0;
             let query_term_count = non_unique_terms.len();
-
             if query_list_len == 0 {
                 if enable_empty_query && query_string.is_empty() {
                     search_iterator_shard(
@@ -3451,6 +3442,7 @@ impl SearchLexicalShard for ShardArc {
                                 })
                                 .take(facet.length.max(facet_cap) as usize)
                                 .collect::<Vec<_>>();
+
                             if !v.is_empty() {
                                 facets.insert(facet.field.clone(), v);
                             }
@@ -3589,7 +3581,6 @@ impl SearchLexicalShard for ShardArc {
                     .results
                     .truncate(search_result.topk_candidates.current_heap_size);
             }
-
             if result_sort.is_empty() {
                 if query_string.is_empty() {
                     result_object
